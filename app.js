@@ -239,11 +239,12 @@ function serializeDecl(d) {
 function safeParseJson(str, fallback) {
   if (!str) return fallback;
   try { 
-    // Loại bỏ các lỗi do double-quotes bị escape sai từ Apps Script
+    // Làm sạch chuỗi: Loại bỏ các dấu nháy kép thừa do Apps Script/Sheets tự động thêm vào
     let cleanStr = String(str).replace(/^"|"$/g, '').replace(/\\"/g, '"');
     return JSON.parse(cleanStr) || fallback; 
   }
-  catch { 
+  catch (err) { 
+    // Ghi nhận lỗi ra bảng điều khiển (Console) để lập trình viên dễ theo dõi
     console.warn("Lỗi parse JSON:", str);
     return fallback; 
   }
