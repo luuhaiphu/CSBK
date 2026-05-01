@@ -237,8 +237,16 @@ function serializeDecl(d) {
 }
 
 function safeParseJson(str, fallback) {
-  try { return JSON.parse(str) || fallback; }
-  catch { return fallback; }
+  if (!str) return fallback;
+  try { 
+    // Loại bỏ các lỗi do double-quotes bị escape sai từ Apps Script
+    let cleanStr = String(str).replace(/^"|"$/g, '').replace(/\\"/g, '"');
+    return JSON.parse(cleanStr) || fallback; 
+  }
+  catch { 
+    console.warn("Lỗi parse JSON:", str);
+    return fallback; 
+  }
 }
 
 // ---- Test kết nối ----
@@ -423,6 +431,7 @@ function updateStatChips() {
   setSafe('statQLTP', `QLTP: ${ql.length}`);
   setSafe('statST', `Siêu thị: ${st.length}`);
   setSafe('statFMCG', `SP FMCG: ${sp.filter(x => x.type === 'fmcg').length}`);
+  setSafe('statFresh', `SP Fresh: ${sp.filter(x => x.type === 'fresh').length}`);
   setSafe('statNV', `NV: ${nv.length}`);
   setSafe('countSieuthi', st.length);
   setSafe('countSanpham', sp.length);
@@ -460,9 +469,10 @@ function validateTime(t1, t2) {
 // ============================================================
 // [1] MASTER DATA IMPORT
 // ============================================================
+// 1. Cập nhật importMasterFile
 function importMasterFile(type, input) {
   const file = input.files[0]; if (!file) return;
-  const keyMap = { phanbo: 'PhanBo', fmcg: 'FMCG', nhanvien: 'NV' };
+  const keyMap = { phanbo: 'PhanBo', fmcg: 'FMCG', fresh: 'Fresh', nhanvien: 'NV' }; // Thêm fresh
   const statusEl = document.getElementById('status' + (keyMap[type] || ''));
   if (statusEl) statusEl.textContent = '⏳ Đang đọc...';
   const reader = new FileReader();
@@ -472,6 +482,7 @@ function importMasterFile(type, input) {
       const rows = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], { header: 1, defval: '' });
       if (type === 'phanbo') parsePhanBo(rows);
       else if (type === 'fmcg') parseSanPham(rows, 'fmcg');
+      else if (type === 'fresh') parseSanPham(rows, 'fresh'); // Dòng MỚI
       else if (type === 'nhanvien') parseNhanVien(rows);
       updateStatChips();
       if (statusEl) statusEl.textContent = '✅ OK!';
@@ -563,6 +574,10 @@ function dlMasterTpl(type) {
   if (type === 'phanbo') {
     d = [['MST','Tên ST','QLTP tháng 4.2026 (tên rút gọn)','Cụm miền'],['12345','BHX_HCM_001','27506 - Bá Thành','HCM']];
     name = 'Template_PhanBo.xlsx';
+  }
+  else if (type === 'fresh') {
+    d = [['Mã sản phẩm','Tên sản phẩm'],['8100567','THỊT HEO ĐÙI']];
+    name = 'Template_Fresh.xlsx';
   } else if (type === 'fmcg') {
     d = [['Mã sản phẩm','Tên sản phẩm'],['1053090000397','BÁNH DD AFC VỊ LÚA MÌ']];
     name = 'Template_FMCG.xlsx';
@@ -708,18 +723,23 @@ function submitChangePass() {
 // ============================================================
 function loadTable() {
   let all = DB.get('declarations') || [];
-  // [2] QLTP chỉ xem đơn của mình
+  // QLTP chỉ xem đơn của mình
   if (currentRole === 'qltp') all = all.filter(d => d.authorCode === currentUser.code);
   // Admin xem tất cả
 
-  const fST = document.getElementById('filterSieuthi').value.toLowerCase();
+  const fST = document.getElementById('filterSieuthi').value.toLowerCase().trim();
   const fFr = document.getElementById('filterTuNgay').value;
   const fTo = document.getElementById('filterDenNgay').value;
   const fSt = document.getElementById('filterStatus').value;
 
   filteredDeclarations = all.filter(d => {
-    const chuoi = ((d.sieuthiCode || '') + ' ' + (d.sieuthiName || '')).toLowerCase();
-    if (fST && !chuoi.includes(fST)) return false;
+    // --- ĐOẠN CODE SỬA LỖI ---
+    // Sử dụng hàm fCodeName để tạo chuỗi "Mã - Tên", đồng nhất với lúc hiển thị dropdown
+    const chuoiHienThi = fCodeName(d.sieuthiCode, d.sieuthiName).toLowerCase();
+    
+    if (fST && !chuoiHienThi.includes(fST)) return false;
+    // -------------------------
+    
     if (fFr && d.ngay < fFr) return false;
     if (fTo && d.ngay > fTo) return false;
     if (fSt && d.status !== fSt) return false;
@@ -842,7 +862,18 @@ function bulkDeleteRecords() {
 // ============================================================
 // [4] DROPDOWN SEARCH — format "Mã - Tên"
 // ============================================================
-function filterDrop(field, query) {
+
+// 1. Thêm hàm Helper Debounce ngay trên filterDrop
+function debounce(func, wait) {
+  let timeout;
+  return function(...args) {
+    clearTimeout(timeout);
+    timeout = setTimeout(() => func.apply(this, args), wait);
+  };
+}
+
+// 2. Khai báo filterDrop dưới dạng biến (const) và bọc qua debounce
+const filterDrop = debounce(function(field, query) {
   const q = String(query).toLowerCase().trim();
   let items = [];
 
@@ -892,7 +923,7 @@ function filterDrop(field, query) {
 
   listEl.innerHTML = html;
   listEl.classList.remove('hidden');
-}
+}, 300); 
 
 function selectDropItem(field, item) {
   if (field === 'filterST') {
@@ -1137,7 +1168,7 @@ async function submitForm() {
 
   if (!st) return toast('error', 'Chọn Siêu thị!');
   if (productRows.length === 0) return toast('error', 'Thêm ít nhất 1 sản phẩm!');
-  // [5] Kiểm tra tất cả SP đã chọn
+  // Kiểm tra tất cả SP đã chọn
   for (let i = 0; i < productRows.length; i++) {
     if (!productRows[i].sanpham) return toast('error', `Sản phẩm #${i + 1} chưa được chọn!`);
   }
@@ -1146,7 +1177,7 @@ async function submitForm() {
   const timeErr = validateTime(tG, dG);
   if (timeErr) return toast('error', timeErr);
 
-  // [5] Build sanphamList từ productRows
+  // Build sanphamList từ productRows
   const sanphamList = productRows.map(r => ({
     id: r.sanpham.id || null,
     code: r.sanpham.code || '',
@@ -1196,13 +1227,21 @@ async function submitForm() {
     // Đẩy lên Sheets ngay
     const pushed = await pushDeclToSheets(newDecl);
     if (pushed) {
-      // Cập nhật ID (không còn LOCAL_)
       toast('success', '✅ Tạo mới và đã đồng bộ lên Google Sheets!');
     } else {
       toast('warning', '⚠ Tạo mới thành công (lưu local). Sync khi có mạng.');
     }
     logAction('TẠO ĐƠN', newId);
   }
+
+  // --- ĐOẠN CODE MỚI THÊM ĐỂ SỬA VẤN ĐỀ 3 ---
+  // Cập nhật bộ lọc ngày về đúng ngày của đơn vừa tạo để đơn không bị ẩn đi
+  document.getElementById('filterTuNgay').value = ngay;
+  document.getElementById('filterDenNgay').value = ngay;
+  
+  // Xóa trắng bộ lọc tìm kiếm siêu thị
+  document.getElementById('filterSieuthi').value = '';
+  // ------------------------------------------
 
   closeModal('createModal');
   loadTable();
