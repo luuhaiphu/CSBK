@@ -861,10 +861,10 @@ function bulkDeleteRecords() {
 }
 
 // ============================================================
-// [4] DROPDOWN SEARCH — format "Mã - Tên"
+// [4] DROPDOWN SEARCH — Xử lý hiển thị gợi ý thông minh
 // ============================================================
 
-// 1. Thêm hàm Helper Debounce ngay trên filterDrop
+// Hàm debounce để tránh treo máy khi tìm kiếm trong 100k sản phẩm
 function debounce(func, wait) {
   let timeout;
   return function(...args) {
@@ -873,7 +873,7 @@ function debounce(func, wait) {
   };
 }
 
-// 2. Khai báo filterDrop dưới dạng biến (const) và bọc qua debounce
+// Cập nhật hàm filterDrop để nhận diện đúng ID sản phẩm động[cite: 1]
 const filterDrop = debounce(function(field, query) {
   const q = String(query).toLowerCase().trim();
   let items = [];
@@ -884,13 +884,15 @@ const filterDrop = debounce(function(field, query) {
     items = all.filter(s => !q || String(s.name).toLowerCase().includes(q) || String(s.code).toLowerCase().includes(q))
       .slice(0, 25)
       .map(s => ({ id: s.id, code: s.code, name: s.name }));
-  } else if (field.startsWith('sanpham')) {
-    // [5] field có thể là 'sanpham_0', 'sanpham_1', ...
+  } 
+  // SỬA LỖI: Nhận diện tất cả các ô nhập sản phẩm (inputSanpham_0, inputSanpham_1...)
+  else if (field.startsWith('sanpham')) {
     const all = DB.get('sanpham') || [];
     items = all.filter(s => !q || String(s.name).toLowerCase().includes(q) || String(s.code).toLowerCase().includes(q))
       .slice(0, 25)
       .map(s => ({ id: s.id, code: s.code, name: s.name }));
-  } else if (field === 'nhanvien') {
+  } 
+  else if (field === 'nhanvien') {
     let all = DB.get('nhanvien') || [];
     if (currentRole === 'qltp') {
       const mySTs = (DB.get('sieuthi') || []).filter(s => s.qltpCode === currentUser.code).map(s => s.code);
@@ -901,13 +903,15 @@ const filterDrop = debounce(function(field, query) {
       .map(n => ({ id: n.id, code: n.code, name: n.name, sub: n.sieuthiCode ? `ST: ${n.sieuthiCode}` : '' }));
   }
 
+  // Xác định đúng ID của danh sách hiển thị (dropdown list)
   const listId = field === 'filterST' ? 'dropFilterst-list' :
     field.startsWith('sanpham') ? `drop-${field}-list` :
     `drop${cap(field)}-list`;
+    
   const listEl = document.getElementById(listId);
   if (!listEl) return;
 
-  // [4] Format "Mã - Tên" trong dropdown
+  // Tạo HTML hiển thị danh sách[cite: 1, 2]
   let html = items.map(it => {
     const safeItem = JSON.stringify(it).replace(/"/g, '&quot;');
     return `<div class="dropdown-item" onmousedown="selectDropItem('${field}', ${safeItem})">
@@ -920,11 +924,12 @@ const filterDrop = debounce(function(field, query) {
       ✍ Nhập tay: "<strong>${query}</strong>"
     </div>`;
   }
+  
   if (!html) html = `<div style="padding:10px;color:#999;font-size:12px;">Không tìm thấy</div>`;
 
   listEl.innerHTML = html;
   listEl.classList.remove('hidden');
-}, 300); 
+}, 300);
 
 function selectDropItem(field, item) {
   if (field === 'filterST') {
