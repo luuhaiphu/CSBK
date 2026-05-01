@@ -504,6 +504,27 @@
           <div class="data-stats"><span class="stat-chip" id="statFMCG">SP FMCG: 0</span></div>
           <div style="margin-top:10px;"><label class="btn btn-import btn-sm" style="cursor:pointer;margin:0;">📂 Chọn File FMCG <input type="file" accept=".xlsx,.xls" style="display:none" onchange="importMasterFile('fmcg', this)"></label><span id="statusFMCG" style="font-size:12px;color:#888;margin-left:8px;"></span></div>
         </div>
+        <!-- Cập nhật chip thống kê (tìm class data-stats) -->
+<div class="data-stats">
+  <span class="stat-chip" id="statQLTP">QLTP: 0</span>
+  <span class="stat-chip" id="statST">Siêu thị: 0</span>
+  <span class="stat-chip" id="statFMCG">SP FMCG: 0</span>
+  <span class="stat-chip" id="statFresh">SP Fresh: 0</span> <!-- Dòng MỚI -->
+</div>
+
+<!-- Thêm Card Import Fresh (đặt dưới thẻ Import FMCG) -->
+<div class="import-master-card">
+  <a href="#" class="btn-link dl-master-btn" onclick="dlMasterTpl('fresh')">⬇ Tải Mẫu</a>
+  <h4>🥬 File Sản Phẩm Fresh (Hàng Tươi Sống)</h4>
+  <div class="col-hint">Cột cần thiết: <span>Mã sản phẩm</span> <span>Tên sản phẩm</span></div>
+  <div style="margin-top:10px;">
+    <label class="btn btn-import btn-sm" style="cursor:pointer;margin:0;">
+      📂 Chọn File Fresh 
+      <input type="file" accept=".xlsx,.xls" style="display:none" onchange="importMasterFile('fresh', this)">
+    </label>
+    <span id="statusFresh" style="font-size:12px;color:#888;margin-left:8px;"></span>
+  </div>
+</div>
         <div class="import-master-card">
           <a href="#" class="btn-link dl-master-btn" onclick="dlMasterTpl('nhanvien')">⬇ Tải Mẫu</a>
           <h4>👥 File Danh Sách Nhân Viên</h4>
