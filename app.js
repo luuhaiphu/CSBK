@@ -1119,20 +1119,39 @@ function renderProductRows() {
 // ============================================================
 // TẠO / SỬA KHAI BÁO
 // ============================================================
+
+// Hàm trợ giúp để gán giá trị an toàn, tránh lỗi "null" làm đứng ứng dụng
+function safeSet(id, value, prop = 'value') {
+  const el = document.getElementById(id);
+  if (el) {
+    el[prop] = value;
+  } else {
+    // Chỉ in cảnh báo ra Console để lập trình viên biết, không làm dừng ứng dụng
+    console.warn(`Không tìm thấy phần tử có ID: ${id}`);
+  }
+}
+
 function openCreateModal() {
   currentEditId = null;
   dropSel = { sieuthi: null, nhanvien: [] };
-  productRows = []; // Reset multi-product
-  document.getElementById('inputSieuthi').value = '';
-  document.getElementById('sieuthiSelected').innerHTML = '';
-  document.getElementById('inputNhanvien').value = '';
-  document.getElementById('nhanvienSelected').innerHTML = '';
-  document.getElementById('formNgay').value = '';
-  document.getElementById('formTuGio').value = '';
-  document.getElementById('formDenGio').value = '';
-  document.getElementById('manualNotice').classList.remove('show');
-  document.getElementById('createModalTitle').textContent = '➕ Tạo Khai báo Biệt Kích';
-  addProductRow(); // Khởi tạo 1 dòng SP mặc định
+  productRows = []; // Reset danh sách đa sản phẩm
+
+  // Xóa trắng các ô nhập liệu một cách an toàn
+  safeSet('inputSieuthi', '');
+  safeSet('sieuthiSelected', '', 'innerHTML');
+  safeSet('inputNhanvien', '');
+  safeSet('nhanvienSelected', '', 'innerHTML');
+  safeSet('formNgay', '');
+  safeSet('formTuGio', '');
+  safeSet('formDenGio', '');
+
+  // Cập nhật giao diện Modal
+  const notice = document.getElementById('manualNotice');
+  if (notice) notice.classList.remove('show');
+  
+  safeSet('createModalTitle', '➕ Tạo Khai báo Biệt Kích', 'textContent');
+
+  addProductRow(); // Khởi tạo 1 dòng sản phẩm mặc định
   showModal('createModal');
 }
 
@@ -1140,45 +1159,51 @@ function openEditModal(id) {
   const d = (DB.get('declarations') || []).find(x => x.id === id);
   if (!d) return;
   currentEditId = id;
+  
   dropSel.sieuthi = { id: d.sieuthiCode, code: d.sieuthiCode || '', name: d.sieuthiName, isManual: d.isManualSieuthi };
   dropSel.nhanvien = [...(d.nhanvienList || [])];
 
-  // [5] Restore multi-product
+  // Khôi phục danh sách đa sản phẩm
   productRows = (d.sanphamList || []).map(sp => ({ sanpham: { ...sp } }));
 
-  document.getElementById('inputSieuthi').value = d.isManualSieuthi ? d.sieuthiName : fCodeName(d.sieuthiCode, d.sieuthiName);
-  document.getElementById('inputNhanvien').value = '';
-  document.getElementById('formNgay').value = d.ngay;
-  document.getElementById('formTuGio').value = d.tuGio || '';
-  document.getElementById('formDenGio').value = d.denGio || '';
+  // Gán dữ liệu vào form an toàn
+  safeSet('inputSieuthi', d.isManualSieuthi ? d.sieuthiName : fCodeName(d.sieuthiCode, d.sieuthiName));
+  safeSet('inputNhanvien', '');
+  safeSet('formNgay', d.ngay);
+  safeSet('formTuGio', d.tuGio || '');
+  safeSet('formDenGio', d.denGio || '');
 
   renderTags('sieuthi');
   renderTags('nhanvien');
   renderProductRows();
   checkManualEntries();
-  document.getElementById('createModalTitle').textContent = '✏ Sửa Khai báo Biệt Kích';
+  
+  safeSet('createModalTitle', '✏ Sửa Khai báo Biệt Kích', 'textContent');
   showModal('createModal');
 }
 
 async function submitForm() {
   const st = dropSel.sieuthi;
   const nv = dropSel.nhanvien;
-  const ngay = document.getElementById('formNgay').value;
-  const tG = document.getElementById('formTuGio').value;
-  const dG = document.getElementById('formDenGio').value;
+  const ngay = document.getElementById('formNgay')?.value;
+  const tG = document.getElementById('formTuGio')?.value;
+  const dG = document.getElementById('formDenGio')?.value;
 
+  // Ràng buộc dữ liệu
   if (!st) return toast('error', 'Chọn Siêu thị!');
   if (productRows.length === 0) return toast('error', 'Thêm ít nhất 1 sản phẩm!');
-  // Kiểm tra tất cả SP đã chọn
+  
   for (let i = 0; i < productRows.length; i++) {
     if (!productRows[i].sanpham) return toast('error', `Sản phẩm #${i + 1} chưa được chọn!`);
   }
+  
   if (!ngay) return toast('error', 'Chọn Ngày!');
   if (nv.length === 0) return toast('error', 'Chọn ít nhất 1 Nhân viên!');
+  
   const timeErr = validateTime(tG, dG);
   if (timeErr) return toast('error', timeErr);
 
-  // Build sanphamList từ productRows
+  // Chuẩn bị danh sách sản phẩm để lưu
   const sanphamList = productRows.map(r => ({
     id: r.sanpham.id || null,
     code: r.sanpham.code || '',
@@ -1189,6 +1214,7 @@ async function submitForm() {
   let decls = DB.get('declarations') || [];
 
   if (currentEditId) {
+    // Logic cập nhật đơn cũ[cite: 1]
     const idx = decls.findIndex(x => x.id === currentEditId);
     decls[idx] = {
       ...decls[idx],
@@ -1200,24 +1226,19 @@ async function submitForm() {
     };
     DB.set('declarations', decls);
     logAction('SỬA ĐƠN', currentEditId);
-    // Đẩy lên Sheets
     if (!decls[idx].id.startsWith('LOCAL_')) {
       await SHEETS.write('updateStatus', { id: decls[idx].id, status: 'pending', rejectReason: '' }).catch(console.error);
     }
     toast('success', 'Cập nhật thành công!');
   } else {
-    // Tạo ID — nếu chưa có Sheets thì dùng LOCAL_ prefix
-    const newId = SHEETS.canWrite
-      ? 'BK' + Date.now().toString().slice(-8)
-      : 'LOCAL_' + Date.now().toString().slice(-8);
-
+    // Logic tạo đơn mới[cite: 1]
+    const newId = SHEETS.canWrite ? 'BK' + Date.now().toString().slice(-8) : 'LOCAL_' + Date.now().toString().slice(-8);
     const newDecl = {
       id: newId,
       authorCode: currentUser.code, authorName: currentUser.name,
       sieuthiCode: st.code || '', sieuthiName: st.name, isManualSieuthi: st.isManual || false,
       ngay, tuGio: tG, denGio: dG,
-      sanphamList,
-      nhanvienList: nv,
+      sanphamList, nhanvienList: nv,
       status: 'pending',
       createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
       rejectReason: ''
@@ -1225,24 +1246,15 @@ async function submitForm() {
     decls.unshift(newDecl);
     DB.set('declarations', decls);
 
-    // Đẩy lên Sheets ngay
     const pushed = await pushDeclToSheets(newDecl);
-    if (pushed) {
-      toast('success', '✅ Tạo mới và đã đồng bộ lên Google Sheets!');
-    } else {
-      toast('warning', '⚠ Tạo mới thành công (lưu local). Sync khi có mạng.');
-    }
+    pushed ? toast('success', '✅ Đã đồng bộ Sheets!') : toast('warning', '⚠ Lưu local thành công!');
     logAction('TẠO ĐƠN', newId);
   }
 
-  // --- ĐOẠN CODE MỚI THÊM ĐỂ SỬA VẤN ĐỀ 3 ---
-  // Cập nhật bộ lọc ngày về đúng ngày của đơn vừa tạo để đơn không bị ẩn đi
-  document.getElementById('filterTuNgay').value = ngay;
-  document.getElementById('filterDenNgay').value = ngay;
-  
-  // Xóa trắng bộ lọc tìm kiếm siêu thị
-  document.getElementById('filterSieuthi').value = '';
-  // ------------------------------------------
+  // SỬA VẤN ĐỀ 3: Cập nhật bộ lọc để thấy đơn vừa tạo ngay lập tức
+  safeSet('filterTuNgay', ngay);
+  safeSet('filterDenNgay', ngay);
+  safeSet('filterSieuthi', '');
 
   closeModal('createModal');
   loadTable();
