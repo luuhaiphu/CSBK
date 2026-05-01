@@ -1,15 +1,12 @@
 // ============================================================
-// BHX BIỆT KÍCH — app.js (Refactored v2)
-//
-// THAY ĐỔI CHÍNH SO VỚI v1:
-//   [1] Google Sheets: chỉ dùng 1 Web App URL (bỏ API Key + SheetID)
-//       doGet đọc theo ?tab=, doPost ghi/xóa
-//   [2] Sync master data 2 chiều: Admin đẩy lên → QLTP tự kéo về
-//   [3] Time 24h: thay <input type="time"> bằng select H+M
-//       → getTimeVal() / setTimeVal() để đọc/ghi
-//   [4] Multi-product: tag-based (giống Nhân viên), bỏ productRows
-//       dropSel.sanpham = [] thay vì productRows array
-//   [5] Format "Mã - Tên" nhất quán toàn bộ
+// BHX BIỆT KÍCH — app.js (Refactored)
+// 
+// THAY ĐỔI CHÍNH:
+//   [1] Đồng bộ Google Sheets (thay localStorage)
+//   [2] Chỉ còn 2 role: admin + qltp (bỏ nganhhang)
+//   [3] Thời gian 24h (HH:mm)
+//   [4] Format hiển thị "Mã - Tên" nhất quán
+//   [5] Multi-product: nhiều SP trên 1 khai báo
 // ============================================================
 
 // ============================================================
@@ -80,24 +77,30 @@ function saveToIDB(key, value) {
 }
 
 // ============================================================
-// [1] GOOGLE SHEETS — chỉ cần 1 Web App URL
-//
+// [1] GOOGLE SHEETS SYNC
 // Kiến trúc:
-//   ĐỌC:  GET  webAppUrl?tab=declarations  → { ok, rows: [...] }
-//   GHI:  POST webAppUrl body=JSON         → { ok, msg }
-//
-// Ưu điểm so với dùng Sheets API + API Key:
-//   - Không cần tạo API Key, không cần Share public Sheet
-//   - Apps Script xử lý auth nội bộ
-//   - Đọc & ghi qua cùng 1 URL
+//   - ĐỌC: Gọi Sheets API v4 (GET, public, cần API Key)
+//   - GHI/XÓA: Gọi Apps Script Web App (POST)
+//   - Cache cục bộ: IndexedDB — fallback khi offline
 // ============================================================
+
 const SHEETS = {
-  get cfg() { return DB.get('sheetsConfig') || {}; },
+  // Lấy config từ DB (admin nhập trong Master Data > Google Sheets tab)
+  get cfg() {
+    return DB.get('sheetsConfig') || {};
+  },
 
-  // Chỉ cần webAppUrl là đủ
-  get ready() { return !!(this.cfg.webAppUrl); },
-  get canWrite() { return !!(this.cfg.webAppUrl); },
+  // Kiểm tra đã cấu hình đủ chưa
+  get ready() {
+    const c = this.cfg;
+    return !!(c.sheetId && c.apiKey);
+  },
 
+  get canWrite() {
+    return !!(this.cfg.webAppUrl);
+  },
+
+  // Cập nhật status badge
   setStatus(state, msg) {
     const dot = document.getElementById('syncDot');
     const txt = document.getElementById('syncText');
@@ -106,32 +109,38 @@ const SHEETS = {
     txt.textContent = msg;
   },
 
-  // [1] ĐỌC: GET ?tab=<tabName>
-  async read(tab) {
+  // Đọc một sheet tab → trả về mảng object (dòng đầu là header)
+  async read(tabName) {
     if (!this.ready) return null;
-    const url = `${this.cfg.webAppUrl}?tab=${encodeURIComponent(tab)}`;
-    const res = await fetch(url, { redirect: 'follow' });
-    if (!res.ok) throw new Error(`HTTP ${res.status} khi đọc tab "${tab}"`);
+    const { sheetId, apiKey } = this.cfg;
+    const url = `https://sheets.googleapis.com/v4/spreadsheets/${sheetId}/values/${encodeURIComponent(tabName)}?key=${apiKey}`;
+    const res = await fetch(url);
+    if (!res.ok) throw new Error(`Lỗi đọc sheet "${tabName}": ${res.status}`);
     const data = await res.json();
-    if (!data.ok) throw new Error(data.msg || `Lỗi đọc tab "${tab}"`);
-    return data.rows || [];
+    const rows = data.values || [];
+    if (rows.length < 2) return [];
+    const headers = rows[0].map(h => String(h).trim());
+    return rows.slice(1).map(row => {
+      const obj = {};
+      headers.forEach((h, i) => { obj[h] = row[i] !== undefined ? String(row[i]).trim() : ''; });
+      return obj;
+    });
   },
 
-  // [1] GHI: POST JSON
+  // Ghi dữ liệu qua Apps Script
   async write(action, payload) {
     if (!this.canWrite) throw new Error('Chưa cấu hình Web App URL!');
     const res = await fetch(this.cfg.webAppUrl, {
       method: 'POST',
-      redirect: 'follow',
-      headers: { 'Content-Type': 'text/plain' }, // text/plain tránh CORS preflight
+      headers: { 'Content-Type': 'text/plain' }, // avoid CORS preflight
       body: JSON.stringify({ action, ...payload })
     });
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    if (!res.ok) throw new Error(`Lỗi ghi: ${res.status}`);
     return await res.json();
   }
 };
 
-// ---- Sync declarations từ Sheets ----
+// ---- Hàm sync chính: kéo declarations từ Sheets ----
 async function syncFromSheets() {
   if (!SHEETS.ready) {
     toast('warning', 'Chưa cấu hình Google Sheets. Vào Admin > Master Data > Google Sheets.');
@@ -140,6 +149,9 @@ async function syncFromSheets() {
   SHEETS.setStatus('syncing', 'Đang sync...');
   try {
     const rows = await SHEETS.read('declarations');
+    if (!rows) { SHEETS.setStatus('error', 'Lỗi sync'); return; }
+
+    // Parse rows → declaration objects
     const decls = rows.map(r => ({
       id: r['id'] || '',
       authorCode: r['authorCode'] || '',
@@ -148,10 +160,10 @@ async function syncFromSheets() {
       sieuthiName: r['sieuthiName'] || '',
       isManualSieuthi: r['isManualSieuthi'] === 'true',
       ngay: r['ngay'] || '',
-      // [3] Lưu và đọc HH:mm
+      // [3] Thời gian 24h — lưu HH:mm, đọc HH:mm
       tuGio: r['tuGio'] || '',
       denGio: r['denGio'] || '',
-      // [4] sanphamList dạng JSON string trong sheet
+      // [5] Multi-product: lưu dạng JSON string trong sheet
       sanphamList: safeParseJson(r['sanphamList'], []),
       nhanvienList: safeParseJson(r['nhanvienList'], []),
       status: r['status'] || 'pending',
@@ -160,10 +172,11 @@ async function syncFromSheets() {
       updatedAt: r['updatedAt'] || ''
     })).filter(d => d.id);
 
-    // Giữ lại các đơn LOCAL_ chưa được đẩy lên Sheets
+    // Merge: ưu tiên Sheets, nhưng giữ local chưa upload (id bắt đầu bằng 'LOCAL_')
     const local = DB.get('declarations') || [];
     const localPending = local.filter(d => d.id.startsWith('LOCAL_'));
-    DB.set('declarations', [...decls, ...localPending]);
+    const merged = [...decls, ...localPending];
+    DB.set('declarations', merged);
 
     SHEETS.setStatus('ok', `Đã sync ${decls.length} đơn`);
     loadTable();
@@ -173,61 +186,6 @@ async function syncFromSheets() {
     toast('error', 'Lỗi sync: ' + err.message);
     console.error(err);
   }
-}
-
-// [2] Sync master data từ Sheets (dùng khi QLTP đăng nhập ở máy mới)
-async function syncMasterFromSheets() {
-  if (!SHEETS.ready) return;
-  const tabs = [
-    { tab: 'qltpList', key: 'qltpList' },
-    { tab: 'sieuthi',  key: 'sieuthi' },
-    { tab: 'sanpham',  key: 'sanpham' },
-    { tab: 'nhanvien', key: 'nhanvien' }
-  ];
-  let synced = 0;
-  for (const { tab, key } of tabs) {
-    try {
-      const rows = await SHEETS.read(tab);
-      if (rows && rows.length > 0) {
-        DB.set(key, rows);
-        synced++;
-      }
-    } catch (err) {
-      console.warn(`syncMasterFromSheets: skip ${tab}`, err.message);
-    }
-  }
-  if (synced > 0) {
-    updateStatChips();
-    console.log(`syncMasterFromSheets: synced ${synced} tabs`);
-  }
-}
-
-// [2] Đẩy master data lên Sheets (Admin sau khi import Excel)
-async function pushMasterToSheets() {
-  if (!SHEETS.ready) {
-    toast('warning', 'Chưa cấu hình Google Sheets!');
-    return;
-  }
-  const tabs = [
-    { tab: 'qltpList', key: 'qltpList', headers: ['code','name'] },
-    { tab: 'sieuthi',  key: 'sieuthi',  headers: ['id','code','name','qltpCode','qltpName'] },
-    { tab: 'sanpham',  key: 'sanpham',  headers: ['id','code','name','type'] },
-    { tab: 'nhanvien', key: 'nhanvien', headers: ['id','code','name','sieuthiCode'] }
-  ];
-  SHEETS.setStatus('syncing', 'Đẩy master...');
-  let ok = 0;
-  for (const { tab, key, headers } of tabs) {
-    try {
-      const data = DB.get(key) || [];
-      await SHEETS.write('pushMaster', { tab, rows: data, headers });
-      ok++;
-    } catch (err) {
-      toast('error', `Lỗi đẩy ${tab}: ` + err.message);
-    }
-  }
-  SHEETS.setStatus('ok', 'Xong');
-  toast('success', `✅ Đã đẩy ${ok}/4 bảng master data lên Sheets!`);
-  logAction('PUSH MASTER', `${ok} tabs`);
 }
 
 // ---- Đẩy 1 declaration lên Sheets ----
@@ -257,6 +215,7 @@ async function updateDeclStatusInSheets(id, status, reason) {
   }
 }
 
+// Serialize declaration → Sheets row (flat)
 function serializeDecl(d) {
   return {
     id: d.id,
@@ -286,129 +245,103 @@ function safeParseJson(str, fallback) {
 async function testSheetConnection() {
   saveSheetConfig();
   const el = document.getElementById('sheetTestResult');
-  if (!SHEETS.ready) {
-    el.innerHTML = '<span style="color:red;">❌ Chưa có Web App URL</span>';
-    return;
-  }
+  if (!SHEETS.ready) { el.innerHTML = '<span style="color:red;">❌ Chưa đủ thông tin (cần Spreadsheet ID + API Key)</span>'; return; }
   el.innerHTML = '⏳ Đang kiểm tra...';
   try {
     const rows = await SHEETS.read('declarations');
-    el.innerHTML = `<span style="color:green;">✅ Kết nối thành công! Tìm thấy ${rows.length} đơn trong sheet "declarations".</span>`;
+    el.innerHTML = `<span style="color:green;">✅ Kết nối thành công! Tìm thấy ${rows ? rows.length : 0} dòng trong sheet "declarations".</span>`;
     SHEETS.setStatus('ok', 'Đã kết nối');
   } catch (err) {
-    el.innerHTML = `<span style="color:red;">❌ ${err.message}</span>`;
+    el.innerHTML = `<span style="color:red;">❌ Lỗi: ${err.message}</span>`;
     SHEETS.setStatus('error', 'Lỗi kết nối');
   }
 }
 
-// [1] Lưu config chỉ còn webAppUrl
 function saveSheetConfig() {
   DB.set('sheetsConfig', {
-    webAppUrl: (document.getElementById('cfgWebAppUrl')?.value || '').trim()
+    sheetId: document.getElementById('cfgSheetId').value.trim(),
+    apiKey: document.getElementById('cfgApiKey').value.trim(),
+    webAppUrl: document.getElementById('cfgWebAppUrl').value.trim()
   });
   toast('success', 'Đã lưu cấu hình Google Sheets!');
 }
 
-// Copy Apps Script code
+// ---- Copy Apps Script boilerplate ----
 function copyAppsScriptCode() {
-  const code = `// BHX Biệt Kích — Google Apps Script v2
-// Deploy: Tiện ích → Apps Script → Triển khai → Web App
-//   Thực thi với tư cách: Tôi (Me)
-//   Quyền truy cập: Bất kỳ ai (Anyone)
+  const code = `// BHX Biệt Kích - Google Apps Script
+// Deploy: Extensions > Apps Script > Deploy > Web App > Execute as Me > Anyone
 
 const SS = SpreadsheetApp.getActiveSpreadsheet();
 
-// ĐỌC: GET ?tab=<tabName>
-function doGet(e) {
-  try {
-    const tab = (e.parameter && e.parameter.tab) ? e.parameter.tab : 'declarations';
-    const sh = SS.getSheetByName(tab);
-    if (!sh || sh.getLastRow() < 1) return ok({ rows: [] });
-    const data = sh.getDataRange().getValues();
-    const headers = data[0].map(h => String(h).trim());
-    const rows = data.slice(1).map(row => {
-      const obj = {};
-      headers.forEach((h, i) => { obj[h] = row[i] !== undefined ? String(row[i]) : ''; });
-      return obj;
-    }).filter(r => Object.values(r).some(v => v !== ''));
-    return ok({ rows });
-  } catch (err) {
-    return ok({ ok: false, msg: err.toString() });
-  }
-}
-
-// GHI: POST body=JSON
 function doPost(e) {
   try {
     const data = JSON.parse(e.postData.contents);
-    if (data.action === 'appendDeclaration') return ok(appendDeclaration(data.row));
-    if (data.action === 'updateStatus')      return ok(updateStatus(data.id, data.status, data.rejectReason));
-    if (data.action === 'deleteDeclaration') return ok(deleteDeclaration(data.id));
-    if (data.action === 'pushMaster')        return ok(pushMaster(data.tab, data.rows, data.headers));
-    return ok({ ok: false, msg: 'Unknown action: ' + data.action });
-  } catch (err) {
-    return ok({ ok: false, msg: err.toString() });
+    const action = data.action;
+    
+    if (action === 'appendDeclaration') {
+      return appendDeclaration(data.row);
+    } else if (action === 'updateStatus') {
+      return updateStatus(data.id, data.status, data.rejectReason);
+    } else if (action === 'deleteDeclaration') {
+      return deleteDeclaration(data.id);
+    }
+    return ok('Unknown action');
+  } catch(err) {
+    return err_(err.toString());
   }
 }
 
 function appendDeclaration(row) {
-  const sh = getOrCreate('declarations');
-  const HEADERS = ['id','authorCode','authorName','sieuthiCode','sieuthiName','isManualSieuthi',
-    'ngay','tuGio','denGio','sanphamList','nhanvienList','status','rejectReason','createdAt','updatedAt'];
-  if (sh.getLastRow() === 0) sh.appendRow(HEADERS);
-  sh.appendRow(HEADERS.map(h => row[h] !== undefined ? row[h] : ''));
-  return { ok: true };
+  const sh = SS.getSheetByName('declarations') || SS.insertSheet('declarations');
+  // Tạo header nếu chưa có
+  if (sh.getLastRow() === 0) {
+    sh.appendRow(['id','authorCode','authorName','sieuthiCode','sieuthiName','isManualSieuthi',
+      'ngay','tuGio','denGio','sanphamList','nhanvienList','status','rejectReason','createdAt','updatedAt']);
+  }
+  sh.appendRow([row.id, row.authorCode, row.authorName, row.sieuthiCode, row.sieuthiName,
+    row.isManualSieuthi, row.ngay, row.tuGio, row.denGio, row.sanphamList, row.nhanvienList,
+    row.status, row.rejectReason, row.createdAt, row.updatedAt]);
+  return ok('appended');
 }
 
 function updateStatus(id, status, rejectReason) {
   const sh = SS.getSheetByName('declarations');
-  if (!sh) return { ok: false, msg: 'Sheet "declarations" không tồn tại' };
+  if (!sh) return err_('Sheet not found');
   const data = sh.getDataRange().getValues();
-  const h = data[0];
-  const c = { id: h.indexOf('id'), status: h.indexOf('status'), reason: h.indexOf('rejectReason'), upd: h.indexOf('updatedAt') };
+  const headers = data[0];
+  const idCol = headers.indexOf('id');
+  const statusCol = headers.indexOf('status');
+  const rejectCol = headers.indexOf('rejectReason');
+  const updatedCol = headers.indexOf('updatedAt');
   for (let i = 1; i < data.length; i++) {
-    if (String(data[i][c.id]) === String(id)) {
-      if (c.status >= 0)  sh.getRange(i+1, c.status+1).setValue(status);
-      if (c.reason >= 0)  sh.getRange(i+1, c.reason+1).setValue(rejectReason || '');
-      if (c.upd >= 0)     sh.getRange(i+1, c.upd+1).setValue(new Date().toISOString());
-      return { ok: true };
+    if (String(data[i][idCol]) === String(id)) {
+      if (statusCol >= 0) sh.getRange(i+1, statusCol+1).setValue(status);
+      if (rejectCol >= 0) sh.getRange(i+1, rejectCol+1).setValue(rejectReason || '');
+      if (updatedCol >= 0) sh.getRange(i+1, updatedCol+1).setValue(new Date().toISOString());
+      return ok('updated');
     }
   }
-  return { ok: false, msg: 'ID not found: ' + id };
+  return err_('ID not found');
 }
 
 function deleteDeclaration(id) {
   const sh = SS.getSheetByName('declarations');
-  if (!sh) return { ok: false, msg: 'Sheet không tồn tại' };
+  if (!sh) return err_('Sheet not found');
   const data = sh.getDataRange().getValues();
   const idCol = data[0].indexOf('id');
   for (let i = data.length - 1; i >= 1; i--) {
-    if (String(data[i][idCol]) === String(id)) { sh.deleteRow(i+1); return { ok: true }; }
+    if (String(data[i][idCol]) === String(id)) {
+      sh.deleteRow(i+1);
+      return ok('deleted');
+    }
   }
-  return { ok: false, msg: 'Not found' };
+  return err_('ID not found');
 }
 
-// Đẩy toàn bộ master data 1 tab (xóa cũ, ghi mới)
-function pushMaster(tab, rows, headers) {
-  const sh = getOrCreate(tab);
-  sh.clearContents();
-  if (!rows || rows.length === 0) { sh.appendRow(headers); return { ok: true, count: 0 }; }
-  sh.appendRow(headers);
-  rows.forEach(r => sh.appendRow(headers.map(h => r[h] !== undefined ? r[h] : '')));
-  return { ok: true, count: rows.length };
-}
-
-function getOrCreate(name) {
-  return SS.getSheetByName(name) || SS.insertSheet(name);
-}
-
-function ok(obj) {
-  const out = Object.assign({ ok: true }, obj);
-  return ContentService.createTextOutput(JSON.stringify(out)).setMimeType(ContentService.MimeType.JSON);
-}
+function ok(msg) { return ContentService.createTextOutput(JSON.stringify({ok:true,msg})).setMimeType(ContentService.MimeType.JSON); }
+function err_(msg) { return ContentService.createTextOutput(JSON.stringify({ok:false,msg})).setMimeType(ContentService.MimeType.JSON); }
 `;
-  navigator.clipboard.writeText(code)
-    .then(() => toast('success', '✅ Đã copy code! Dán vào Extensions > Apps Script'));
+  navigator.clipboard.writeText(code).then(() => toast('success', '✅ Đã copy Apps Script code! Dán vào Extensions > Apps Script'));
 }
 
 // ============================================================
@@ -420,55 +353,25 @@ let selectedIds = new Set();
 let parsedBulkRows = [];
 let rejectTargetId = null;
 let currentEditId = null;
-
-// [4] dropSel.sanpham thay productRows — multi-tag giống nhanvien
-let dropSel = { sieuthi: null, sanpham: [], nhanvien: [] };
+// [4] dropSel: sieuthi (single), nhanvien (multi)
+// [5] productRows: array cho multi-product
+let dropSel = { sieuthi: null, nhanvien: [] };
+let productRows = []; // [{ sanpham: null|{id,code,name,isManual}, dropId: 'pr_0' }, ...]
 let hasManualEntry = false;
 
 // ============================================================
-// [3] FORMAT THỜI GIAN 24H — getTimeVal / setTimeVal
+// FORMAT — [3] 24h time / [4] "Mã - Tên"
 // ============================================================
 
-// Đọc giá trị từ cặp select H+M → "HH:mm"
-function getTimeVal(prefix) {
-  const h = document.getElementById(prefix + 'H')?.value || '';
-  const m = document.getElementById(prefix + 'M')?.value || '00';
-  return h ? `${h}:${m}` : '';
-}
-
-// Ghi giá trị "HH:mm" vào cặp select H+M
-function setTimeVal(prefix, timeStr) {
-  const hEl = document.getElementById(prefix + 'H');
-  const mEl = document.getElementById(prefix + 'M');
-  if (!hEl || !mEl) return;
-  if (!timeStr) { hEl.value = ''; mEl.value = '00'; return; }
-  const parts = String(timeStr).split(':');
-  const h = parts[0]?.padStart(2, '0') || '';
-  const rawM = parseInt(parts[1] || '0');
-  // Làm tròn phút về mốc gần nhất trong [00, 15, 30, 45]
-  const mRounded = [0, 15, 30, 45].reduce((prev, curr) =>
-    Math.abs(curr - rawM) < Math.abs(prev - rawM) ? curr : prev);
-  hEl.value = h;
-  mEl.value = String(mRounded).padStart(2, '0');
-}
-
-// Hiển thị giờ 24h trong bảng/detail
+// [3] Hiển thị giờ 24h: HH:mm
 function fTime(t) {
   if (!t) return '--';
+  // Đảm bảo luôn HH:mm, loại bỏ seconds nếu có
   const parts = String(t).split(':');
   return `${String(parts[0]).padStart(2,'0')}:${String(parts[1] || '00').padStart(2,'0')}`;
 }
 
-// [3] Validate thời gian 24h
-function validateTime(t1, t2) {
-  if (!t1 || !t2) return 'Vui lòng chọn đủ Từ giờ và Đến giờ!';
-  if (t1 < '05:00' || t1 > '22:00' || t2 < '05:00' || t2 > '22:00')
-    return 'Giờ hoạt động chỉ từ 05:00 đến 22:00!';
-  if (t1 >= t2) return 'Từ giờ phải nhỏ hơn Đến giờ!';
-  return null;
-}
-
-// [5] Format "Mã - Tên"
+// [4] Format "Mã - Tên"
 function fCodeName(code, name) {
   if (code && name) return `${code} - ${name}`;
   return name || code || '--';
@@ -493,19 +396,23 @@ function initSystem() {
 
 function initSeedData() {
   if (!DB.get('declarations')) DB.set('declarations', []);
-  if (!DB.get('historyLog'))   DB.set('historyLog', []);
-  if (!DB.get('adminPass'))    DB.set('adminPass', '24122004');
-  if (!DB.get('sieuthi'))      DB.set('sieuthi', []);
-  if (!DB.get('sanpham'))      DB.set('sanpham', []);
-  if (!DB.get('nhanvien'))     DB.set('nhanvien', []);
-  if (!DB.get('qltpList'))     DB.set('qltpList', []);
+  if (!DB.get('historyLog')) DB.set('historyLog', []);
+  if (!DB.get('adminPass')) DB.set('adminPass', '24122004');
+  if (!DB.get('sieuthi')) DB.set('sieuthi', []);
+  if (!DB.get('sanpham')) DB.set('sanpham', []);
+  if (!DB.get('nhanvien')) DB.set('nhanvien', []);
+  if (!DB.get('qltpList')) DB.set('qltpList', []);
+  // [2] Bỏ nhUsers hoàn toàn
 }
 
-// [1] Chỉ load webAppUrl
 function loadSheetConfigToForm() {
   const cfg = DB.get('sheetsConfig') || {};
-  const el = document.getElementById('cfgWebAppUrl');
-  if (el) el.value = cfg.webAppUrl || '';
+  const el1 = document.getElementById('cfgSheetId');
+  const el2 = document.getElementById('cfgApiKey');
+  const el3 = document.getElementById('cfgWebAppUrl');
+  if (el1) el1.value = cfg.sheetId || '';
+  if (el2) el2.value = cfg.apiKey || '';
+  if (el3) el3.value = cfg.webAppUrl || '';
 }
 
 function updateStatChips() {
@@ -513,14 +420,15 @@ function updateStatChips() {
   const sp = DB.get('sanpham') || [];
   const nv = DB.get('nhanvien') || [];
   const ql = DB.get('qltpList') || [];
-  setSafe('statQLTP',  `QLTP: ${ql.length}`);
-  setSafe('statST',    `Siêu thị: ${st.length}`);
-  setSafe('statFMCG',  `SP FMCG: ${sp.filter(x => x.type === 'fmcg').length}`);
-  setSafe('statNV',    `NV: ${nv.length}`);
-  setSafe('countSieuthi',  st.length);
-  setSafe('countSanpham',  sp.length);
+  setSafe('statQLTP', `QLTP: ${ql.length}`);
+  setSafe('statST', `Siêu thị: ${st.length}`);
+  setSafe('statFMCG', `SP FMCG: ${sp.filter(x => x.type === 'fmcg').length}`);
+  setSafe('statNV', `NV: ${nv.length}`);
+  setSafe('countSieuthi', st.length);
+  setSafe('countSanpham', sp.length);
   setSafe('countNhanvien', nv.length);
-  setSafe('countUsers',    ql.length + 1);
+  // [2] Chỉ còn admin + qltp
+  setSafe('countUsers', ql.length + 1);
 }
 
 function setSafe(id, val) {
@@ -540,8 +448,17 @@ function logAction(action, detail) {
   DB.set('historyLog', hist);
 }
 
+// [3] Validate thời gian 24h
+function validateTime(t1, t2) {
+  if (!t1 || !t2) return 'Vui lòng nhập đủ Từ giờ và Đến giờ!';
+  if (t1 < '05:00' || t1 > '22:00' || t2 < '05:00' || t2 > '22:00')
+    return 'Giờ hoạt động chỉ từ 05:00 đến 22:00!';
+  if (t1 >= t2) return "Từ giờ phải nhỏ hơn Đến giờ!";
+  return null;
+}
+
 // ============================================================
-// MASTER DATA IMPORT
+// [1] MASTER DATA IMPORT
 // ============================================================
 function importMasterFile(type, input) {
   const file = input.files[0]; if (!file) return;
@@ -570,19 +487,17 @@ function importMasterFile(type, input) {
 function parsePhanBo(rows) {
   let headerIdx = 0;
   for (let i = 0; i < Math.min(5, rows.length); i++) {
-    if (rows[i].some(c => String(c).toUpperCase().includes('MST') || String(c).includes('Tên ST'))) {
-      headerIdx = i; break;
-    }
+    if (rows[i].some(c => String(c).toUpperCase().includes('MST') || String(c).includes('Tên ST'))) { headerIdx = i; break; }
   }
   const headers = rows[headerIdx].map(h => String(h).trim());
-  const idxMST  = headers.findIndex(h => h.toUpperCase() === 'MST' || h.includes('MST'));
-  const idxTen  = headers.findIndex(h => h.includes('Tên ST') || h.includes('TEN ST'));
+  const idxMST = headers.findIndex(h => h.toUpperCase() === 'MST' || h.includes('MST'));
+  const idxTen = headers.findIndex(h => h.includes('Tên ST') || h.includes('TEN ST'));
   const idxQLTP = headers.findIndex(h => h.includes('tên rút gọn') || h.includes('rút gọn') || (h.includes('QLTP') && h.includes('4')));
   let sieuthi = [], qltpMap = {};
   for (let i = headerIdx + 1; i < rows.length; i++) {
     const r = rows[i];
-    const mst   = String(r[idxMST]  || '').trim();
-    const tenST = String(r[idxTen]  || '').trim();
+    const mst = String(r[idxMST] || '').trim();
+    const tenST = String(r[idxTen] || '').trim();
     const qltpRaw = String(r[idxQLTP] || '').trim();
     if (!mst || !tenST) continue;
     let qltpCode = '', qltpName = '';
@@ -601,18 +516,16 @@ function parsePhanBo(rows) {
 function parseSanPham(rows, type) {
   let headerIdx = 0;
   for (let i = 0; i < Math.min(5, rows.length); i++) {
-    if (rows[i].some(c => String(c).toLowerCase().includes('mã') || String(c).toLowerCase().includes('ma'))) {
-      headerIdx = i; break;
-    }
+    if (rows[i].some(c => String(c).toLowerCase().includes('mã') || String(c).toLowerCase().includes('ma'))) { headerIdx = i; break; }
   }
   const headers = rows[headerIdx].map(h => String(h).trim().toLowerCase());
-  const idxMa  = headers.findIndex(h => h.includes('mã') || h.includes('ma'));
+  const idxMa = headers.findIndex(h => h.includes('mã') || h.includes('ma'));
   const idxTen = headers.findIndex(h => (h.includes('tên') || h.includes('ten')) && !h.includes('tắt'));
   let existing = (DB.get('sanpham') || []).filter(s => s.type !== type);
   let newItems = [], seen = new Set(existing.map(s => s.code));
   for (let i = headerIdx + 1; i < rows.length; i++) {
     const r = rows[i];
-    const ma  = String(r[idxMa]  || '').trim();
+    const ma = String(r[idxMa] || '').trim();
     const ten = String(r[idxTen] || '').trim();
     if (!ma || !ten || seen.has(ma)) continue;
     seen.add(ma);
@@ -625,20 +538,18 @@ function parseSanPham(rows, type) {
 function parseNhanVien(rows) {
   let headerIdx = 3;
   for (let i = 0; i < Math.min(6, rows.length); i++) {
-    if (rows[i].some(c => String(c).toLowerCase().includes('mã nhân viên') || String(c).toLowerCase().includes('ma nhan vien'))) {
-      headerIdx = i; break;
-    }
+    if (rows[i].some(c => String(c).toLowerCase().includes('mã nhân viên') || String(c).toLowerCase().includes('ma nhan vien'))) { headerIdx = i; break; }
   }
   const headers = rows[headerIdx].map(h => String(h).trim().toLowerCase());
-  const idxMa  = headers.findIndex(h => h.includes('mã nhân viên') || h.includes('ma nhan vien'));
+  const idxMa = headers.findIndex(h => h.includes('mã nhân viên') || h.includes('ma nhan vien'));
   const idxTen = headers.findIndex(h => h.includes('tên nhân viên') || h.includes('ten nhan vien'));
-  const idxST  = headers.findIndex(h => h.includes('mã siêu thị') || h.includes('ma sieu thi'));
+  const idxST = headers.findIndex(h => h.includes('mã siêu thị') || h.includes('ma sieu thi'));
   let items = [], seen = new Set();
   for (let i = headerIdx + 1; i < rows.length; i++) {
     const r = rows[i];
-    const ma  = String(r[idxMa]  || '').trim();
+    const ma = String(r[idxMa] || '').trim();
     const ten = String(r[idxTen] || '').trim();
-    const st  = idxST >= 0 ? String(r[idxST] || '').trim() : '';
+    const st = idxST >= 0 ? String(r[idxST] || '').trim() : '';
     if (!ma || !ten || seen.has(ma)) continue;
     seen.add(ma);
     items.push({ id: ma, code: ma, name: ten, sieuthiCode: st });
@@ -667,14 +578,14 @@ function dlMasterTpl(type) {
 }
 
 // ============================================================
-// LOGIN — Admin + QLTP
+// [2] LOGIN — chỉ còn Admin + QLTP
 // ============================================================
 function toggleLoginFields() {
   const r = document.getElementById('loginRole').value;
-  document.getElementById('grpQLTP').style.display  = r === 'qltp'  ? 'block' : 'none';
+  document.getElementById('grpQLTP').style.display = r === 'qltp' ? 'block' : 'none';
   document.getElementById('grpAdmin').style.display = r === 'admin' ? 'block' : 'none';
   const hints = {
-    qltp:  '📌 Nhập mã QLTP của bạn (VD: 27506). Hệ thống sẽ tự xác nhận và lọc dữ liệu theo phạm vi của bạn.',
+    qltp: '📌 Nhập mã QLTP của bạn (VD: 27506). Hệ thống sẽ tự xác nhận và lọc dữ liệu theo phạm vi của bạn.',
     admin: '🔐 Chỉ dành cho Admin BHX. Có quyền hạn toàn bộ hệ thống.'
   };
   const hint = document.getElementById('loginHint');
@@ -689,9 +600,11 @@ function suggestQLTP(val) {
   if (!q) { suggest.classList.add('hidden'); document.getElementById('qltpConfirm').style.display = 'none'; return; }
   const filtered = qltps.filter(x => String(x.code).toLowerCase().includes(q) || String(x.name).toLowerCase().includes(q)).slice(0, 10);
   if (!filtered.length) { suggest.classList.add('hidden'); document.getElementById('qltpConfirm').style.display = 'none'; return; }
+  // [4] Format "Mã - Tên" trong gợi ý
   suggest.innerHTML = filtered.map(x =>
     `<div class="login-suggest-item" onclick="selectQLTPLogin('${x.code}','${x.name.replace(/'/g, "\\'")}')">
-      <span class="mst">${x.code}</span><span class="name">${x.name}</span>
+      <span class="mst">${x.code}</span>
+      <span class="name">${x.name}</span>
     </div>`
   ).join('');
   suggest.classList.remove('hidden');
@@ -701,6 +614,7 @@ function selectQLTPLogin(code, name) {
   document.getElementById('loginCodeQLTP').value = code;
   document.getElementById('qltpSuggest').classList.add('hidden');
   document.getElementById('qltpConfirm').style.display = 'block';
+  // [4] Format Mã - Tên
   document.getElementById('qltpConfirmText').textContent = fCodeName(code, name);
   handleLogin();
 }
@@ -717,10 +631,9 @@ function handleLogin() {
   } else if (r === 'qltp') {
     const code = document.getElementById('loginCodeQLTP').value.trim();
     if (!code) return toast('error', 'Nhập mã QLTP!');
-    // Thử tìm trong IndexedDB trước
     const qltps = DB.get('qltpList') || [];
     const found = qltps.find(x => String(x.code) === code);
-    if (!found) return toast('error', `Mã QLTP [${code}] không tồn tại. Liên hệ Admin.`);
+    if (!found) return toast('error', `Mã QLTP [${code}] không tồn tại trong hệ thống.`);
     currentUser = { code: found.code, name: found.name, role: 'qltp' };
     currentRole = 'qltp';
   }
@@ -728,9 +641,10 @@ function handleLogin() {
   finishLogin();
 }
 
-async function finishLogin() {
+function finishLogin() {
   document.getElementById('loginOverlay').style.display = 'none';
   document.getElementById('appContainer').classList.remove('blurred');
+  // [4] Format Mã - Tên ở header
   const roleLabel = { admin: 'ADMIN', qltp: 'QLTP' }[currentRole];
   document.getElementById('headerUserName').textContent = `${currentUser.name} (${currentUser.code} — ${roleLabel})`;
   updateRoleUI();
@@ -740,13 +654,9 @@ async function finishLogin() {
   document.getElementById('filterDenNgay').value = today;
   logAction('ĐĂNG NHẬP', roleLabel);
 
+  // Auto sync khi login nếu đã cấu hình Sheets
   if (SHEETS.ready) {
-    // [2] QLTP: sync master data trước (để có dữ liệu siêu thị/SP/NV)
-    if (currentRole === 'qltp') {
-      toast('warning', '⏳ Đang tải dữ liệu từ Sheets...');
-      await syncMasterFromSheets();
-    }
-    syncFromSheets(); // async, không await
+    syncFromSheets();
   } else {
     SHEETS.setStatus('error', 'Chưa cấu hình');
     loadTable();
@@ -765,14 +675,16 @@ function logout() {
   document.getElementById('loginCodeQLTP').value = '';
 }
 
+// [2] updateRoleUI: chỉ còn 2 role, bỏ ngành hàng
 function updateRoleUI() {
   const isAd = currentRole === 'admin';
   const isQL = currentRole === 'qltp';
-  document.getElementById('adminButtons').style.display       = isAd ? 'flex' : 'none';
-  document.getElementById('btnTaoMoi').style.display          = (isQL || isAd) ? 'inline-flex' : 'none';
-  document.getElementById('btnImportKhaiBao').style.display   = (isQL || isAd) ? 'inline-flex' : 'none';
+  document.getElementById('adminButtons').style.display = isAd ? 'flex' : 'none';
+  document.getElementById('btnTaoMoi').style.display = (isQL || isAd) ? 'inline-flex' : 'none';
+  document.getElementById('btnImportKhaiBao').style.display = (isQL || isAd) ? 'inline-flex' : 'none';
+  // Status bar
   document.getElementById('roleStatusText').innerHTML =
-    `Phân hệ: ${isAd ? 'ADMIN' : 'QLTP'} | ${currentUser.name} (${currentUser.code})`;
+    `Phân hệ: ${currentRole === 'admin' ? 'ADMIN' : 'QLTP'} | ${currentUser.name} (${currentUser.code})`;
 }
 
 function openChangePassModal() {
@@ -796,7 +708,9 @@ function submitChangePass() {
 // ============================================================
 function loadTable() {
   let all = DB.get('declarations') || [];
+  // [2] QLTP chỉ xem đơn của mình
   if (currentRole === 'qltp') all = all.filter(d => d.authorCode === currentUser.code);
+  // Admin xem tất cả
 
   const fST = document.getElementById('filterSieuthi').value.toLowerCase();
   const fFr = document.getElementById('filterTuNgay').value;
@@ -826,27 +740,34 @@ function renderTable() {
   tbody.innerHTML = filteredDeclarations.map((d, i) => {
     const checked = selectedIds.has(d.id) ? 'checked' : '';
 
+    // [4] Siêu thị: Mã - Tên
     const stTag = d.isManualSieuthi
       ? `<span class="manual-tag">⚠ ${d.sieuthiName}</span>`
       : `<b style="color:var(--green)">${fCodeName(d.sieuthiCode, d.sieuthiName)}</b>`;
 
-    // [4] DS sản phẩm dạng tags
-    const spTags = (d.sanphamList || []).map(sp =>
+    // [5] Multi-product list
+    const spList = (d.sanphamList || []);
+    const spTags = spList.map(sp =>
       sp.isManual
         ? `<span class="manual-tag">⚠ ${sp.name}</span>`
+        // [4] Format Mã - Tên
         : `<div style="font-size:11px;"><b style="color:var(--green)">${fCodeName(sp.code, sp.name)}</b></div>`
     ).join('');
 
     const nvTags = (d.nhanvienList || []).map(n =>
-      n.isManual ? `<span class="manual-tag">⚠ ${n.name}</span>` : fCodeName(n.code, n.name)
+      n.isManual
+        ? `<span class="manual-tag">⚠ ${n.name}</span>`
+        // [4] Format Mã - Tên
+        : fCodeName(n.code, n.name)
     ).join(', ');
 
     const stat = {
-      pending:  '<span class="badge badge-pending">Chờ duyệt</span>',
+      pending: '<span class="badge badge-pending">Chờ duyệt</span>',
       approved: '<span class="badge badge-approved">Đã duyệt</span>',
       rejected: '<span class="badge badge-rejected">Từ chối</span>'
     }[d.status] || '';
 
+    // [2] Chỉ admin mới duyệt/từ chối; QLTP chỉ sửa/xóa đơn của mình
     let acts = `<button class="btn btn-sm btn-secondary" onclick="openDetail('${d.id}')">👁</button> `;
     if ((currentRole === 'qltp' || currentRole === 'admin') && (d.status === 'rejected' || d.status === 'draft')) {
       acts += `<button class="btn btn-sm btn-primary" onclick="openEditModal('${d.id}')">✏</button> `;
@@ -865,7 +786,9 @@ function renderTable() {
       <td style="font-weight:600;color:var(--green);font-size:12px;">${d.authorCode}<br><span style="font-weight:400;color:#555;">${d.authorName}</span></td>
       <td style="font-size:12px;">${stTag}</td>
       <td style="font-weight:bold;color:var(--blue);white-space:nowrap;">${fDate(d.ngay)}</td>
+      <!-- [3] Hiển thị giờ 24h -->
       <td style="font-size:12px;white-space:nowrap;">${fTime(d.tuGio)} - ${fTime(d.denGio)}</td>
+      <!-- [5] DS sản phẩm -->
       <td style="font-size:11px;max-width:200px;">${spTags || '--'}</td>
       <td style="font-size:11px;max-width:160px;">${nvTags}</td>
       <td>${stat}</td>
@@ -874,6 +797,7 @@ function renderTable() {
   }).join('');
 }
 
+// Approve 1 đơn (Admin)
 async function approveOne(id) {
   let decls = DB.get('declarations') || [];
   const idx = decls.findIndex(x => x.id === id);
@@ -901,11 +825,12 @@ function updateSelectedCount() {
   document.getElementById('selectedCount').textContent = selectedIds.size > 0 ? `(Đã chọn ${selectedIds.size})` : '';
   document.getElementById('btnBulkDelete').style.display = (selectedIds.size > 0 && currentRole === 'admin') ? 'inline-flex' : 'none';
 }
-
-async function bulkDeleteRecords() {
+function bulkDeleteRecords() {
   if (!confirm(`Xóa ${selectedIds.size} đơn đã chọn?`)) return;
+  let d = DB.get('declarations') || [];
   const toDelete = [...selectedIds];
-  DB.set('declarations', (DB.get('declarations') || []).filter(x => !selectedIds.has(x.id)));
+  DB.set('declarations', d.filter(x => !selectedIds.has(x.id)));
+  // Xóa trên Sheets (nếu có)
   toDelete.forEach(id => {
     if (!id.startsWith('LOCAL_')) SHEETS.write('deleteDeclaration', { id }).catch(console.error);
   });
@@ -915,7 +840,7 @@ async function bulkDeleteRecords() {
 }
 
 // ============================================================
-// [4][5] DROPDOWN SEARCH — tag-based multi-select cho sanpham
+// [4] DROPDOWN SEARCH — format "Mã - Tên"
 // ============================================================
 function filterDrop(field, query) {
   const q = String(query).toLowerCase().trim();
@@ -925,14 +850,14 @@ function filterDrop(field, query) {
     let all = DB.get('sieuthi') || [];
     if (currentRole === 'qltp') all = all.filter(s => s.qltpCode === currentUser.code);
     items = all.filter(s => !q || String(s.name).toLowerCase().includes(q) || String(s.code).toLowerCase().includes(q))
-      .slice(0, 25).map(s => ({ id: s.id, code: s.code, name: s.name }));
-
-  } else if (field === 'sanpham') {
-    // [4] Sanpham: tag-based — không filter theo role
+      .slice(0, 25)
+      .map(s => ({ id: s.id, code: s.code, name: s.name }));
+  } else if (field.startsWith('sanpham')) {
+    // [5] field có thể là 'sanpham_0', 'sanpham_1', ...
     const all = DB.get('sanpham') || [];
     items = all.filter(s => !q || String(s.name).toLowerCase().includes(q) || String(s.code).toLowerCase().includes(q))
-      .slice(0, 25).map(s => ({ id: s.id, code: s.code, name: s.name }));
-
+      .slice(0, 25)
+      .map(s => ({ id: s.id, code: s.code, name: s.name }));
   } else if (field === 'nhanvien') {
     let all = DB.get('nhanvien') || [];
     if (currentRole === 'qltp') {
@@ -940,19 +865,21 @@ function filterDrop(field, query) {
       all = all.filter(n => !n.sieuthiCode || mySTs.includes(n.sieuthiCode));
     }
     items = all.filter(n => !q || String(n.name).toLowerCase().includes(q) || String(n.code).toLowerCase().includes(q))
-      .slice(0, 25).map(n => ({ id: n.id, code: n.code, name: n.name, sub: n.sieuthiCode ? `ST: ${n.sieuthiCode}` : '' }));
+      .slice(0, 25)
+      .map(n => ({ id: n.id, code: n.code, name: n.name, sub: n.sieuthiCode ? `ST: ${n.sieuthiCode}` : '' }));
   }
 
-  const listId = field === 'filterST' ? 'dropFilterst-list' : `drop${cap(field)}-list`;
+  const listId = field === 'filterST' ? 'dropFilterst-list' :
+    field.startsWith('sanpham') ? `drop-${field}-list` :
+    `drop${cap(field)}-list`;
   const listEl = document.getElementById(listId);
   if (!listEl) return;
 
-  // [5] Format "Mã - Tên" trong dropdown
+  // [4] Format "Mã - Tên" trong dropdown
   let html = items.map(it => {
     const safeItem = JSON.stringify(it).replace(/"/g, '&quot;');
     return `<div class="dropdown-item" onmousedown="selectDropItem('${field}', ${safeItem})">
       <span><b style="color:var(--green)">${it.code}</b> - ${it.name}</span>
-      ${it.sub ? `<small style="color:#888;">${it.sub}</small>` : ''}
     </div>`;
   }).join('');
 
@@ -969,6 +896,7 @@ function filterDrop(field, query) {
 
 function selectDropItem(field, item) {
   if (field === 'filterST') {
+    // [4] Format Mã - Tên trong filter
     document.getElementById('filterSieuthi').value = fCodeName(item.code, item.name);
     document.getElementById('dropFilterst-list').classList.add('hidden');
     loadTable();
@@ -982,17 +910,6 @@ function selectDropItem(field, item) {
     checkManualEntries();
     return;
   }
-  // [4] Sanpham: thêm vào mảng (multi), không ghi đè
-  if (field === 'sanpham') {
-    if (!dropSel.sanpham.find(s => s.id === item.id)) {
-      dropSel.sanpham.push({ ...item, isManual: false });
-    }
-    document.getElementById('inputSanpham').value = '';
-    renderTags('sanpham');
-    document.getElementById('dropSanpham-list').classList.add('hidden');
-    checkManualEntries();
-    return;
-  }
   if (field === 'nhanvien') {
     if (!dropSel.nhanvien.find(n => n.id === item.id)) dropSel.nhanvien.push({ ...item, isManual: false });
     document.getElementById('inputNhanvien').value = '';
@@ -1000,6 +917,19 @@ function selectDropItem(field, item) {
     document.getElementById('dropNhanvien-list').classList.add('hidden');
     checkManualEntries();
     return;
+  }
+  // [5] Sanpham field: 'sanpham_0', 'sanpham_1', ...
+  if (field.startsWith('sanpham_')) {
+    const rowIdx = parseInt(field.split('_')[1]);
+    if (productRows[rowIdx] !== undefined) {
+      productRows[rowIdx].sanpham = { ...item, isManual: false };
+      renderProductRowTag(rowIdx);
+      const inputEl = document.getElementById(`inputSanpham_${rowIdx}`);
+      if (inputEl) inputEl.value = fCodeName(item.code, item.name);
+      const listEl = document.getElementById(`drop-sanpham_${rowIdx}-list`);
+      if (listEl) listEl.classList.add('hidden');
+      checkManualEntries();
+    }
   }
 }
 
@@ -1019,15 +949,6 @@ function selectManualItem(field, txt) {
     checkManualEntries();
     return;
   }
-  // [4] Sanpham manual: thêm vào mảng
-  if (field === 'sanpham') {
-    dropSel.sanpham.push({ id: null, code: '', name: txt, isManual: true });
-    document.getElementById('inputSanpham').value = '';
-    renderTags('sanpham');
-    document.getElementById('dropSanpham-list').classList.add('hidden');
-    checkManualEntries();
-    return;
-  }
   if (field === 'nhanvien') {
     dropSel.nhanvien.push({ id: null, code: '', name: txt, isManual: true });
     document.getElementById('inputNhanvien').value = '';
@@ -1036,18 +957,23 @@ function selectManualItem(field, txt) {
     checkManualEntries();
     return;
   }
+  if (field.startsWith('sanpham_')) {
+    const rowIdx = parseInt(field.split('_')[1]);
+    if (productRows[rowIdx] !== undefined) {
+      productRows[rowIdx].sanpham = { id: null, code: '', name: txt, isManual: true };
+      const inputEl = document.getElementById(`inputSanpham_${rowIdx}`);
+      if (inputEl) inputEl.value = txt;
+      renderProductRowTag(rowIdx);
+      const listEl = document.getElementById(`drop-sanpham_${rowIdx}-list`);
+      if (listEl) listEl.classList.add('hidden');
+      checkManualEntries();
+    }
+  }
 }
 
 function removeTag(field, idx) {
-  if (field === 'sieuthi') {
-    dropSel.sieuthi = null;
-    document.getElementById('inputSieuthi').value = '';
-  } else if (field === 'sanpham') {
-    // [4] Xóa 1 SP khỏi mảng
-    dropSel.sanpham.splice(idx, 1);
-  } else if (field === 'nhanvien') {
-    dropSel.nhanvien.splice(idx, 1);
-  }
+  if (field === 'nhanvien') dropSel.nhanvien.splice(idx, 1);
+  else if (field === 'sieuthi') { dropSel.sieuthi = null; document.getElementById('inputSieuthi').value = ''; }
   renderTags(field);
   checkManualEntries();
 }
@@ -1057,36 +983,40 @@ function renderTags(field) {
     const c = document.getElementById('sieuthiSelected');
     const sel = dropSel.sieuthi;
     c.innerHTML = sel ? `<span class="tag-item ${sel.isManual ? 'manual' : ''}">
-      ${sel.isManual ? '⚠ ' : ''}${sel.isManual ? sel.name : fCodeName(sel.code, sel.name)}
+      ${sel.isManual ? '⚠' : ''}
+      <!-- [4] Mã - Tên trong tag -->
+      ${sel.isManual ? sel.name : fCodeName(sel.code, sel.name)}
       <span class="remove" onmousedown="removeTag('sieuthi')">×</span>
     </span>` : '';
-
-  } else if (field === 'sanpham') {
-    // [4] Multi-tag cho sản phẩm
-    const c = document.getElementById('sanphamSelected');
-    c.innerHTML = dropSel.sanpham.map((sp, i) =>
-      `<span class="tag-item ${sp.isManual ? 'manual' : ''}">
-        ${sp.isManual ? '⚠ ' : ''}${sp.isManual ? sp.name : fCodeName(sp.code, sp.name)}
-        <span class="remove" onmousedown="removeTag('sanpham',${i})">×</span>
-      </span>`
-    ).join('');
-
   } else if (field === 'nhanvien') {
     const c = document.getElementById('nhanvienSelected');
     c.innerHTML = dropSel.nhanvien.map((n, i) =>
       `<span class="tag-item ${n.isManual ? 'manual' : ''}">
-        ${n.isManual ? '⚠ ' : ''}${n.isManual ? n.name : fCodeName(n.code, n.name)}
+        ${n.isManual ? '⚠' : ''}
+        <!-- [4] Mã - Tên trong tag -->
+        ${n.isManual ? n.name : fCodeName(n.code, n.name)}
         <span class="remove" onmousedown="removeTag('nhanvien',${i})">×</span>
       </span>`
     ).join('');
   }
 }
 
+// [5] Render tag cho 1 product row
+function renderProductRowTag(rowIdx) {
+  const c = document.getElementById(`spTag_${rowIdx}`);
+  if (!c) return;
+  const sp = productRows[rowIdx]?.sanpham;
+  c.innerHTML = sp ? `<span class="tag-item ${sp.isManual ? 'manual' : ''}">
+    ${sp.isManual ? '⚠' : ''} ${sp.isManual ? sp.name : fCodeName(sp.code, sp.name)}
+    <span class="remove" onmousedown="removeSanpham(${rowIdx})">×</span>
+  </span>` : '';
+}
+
 function checkManualEntries() {
   const hasMnST = dropSel.sieuthi?.isManual;
-  const hasMnSP = dropSel.sanpham.some(s => s.isManual);
   const hasMnNV = dropSel.nhanvien.some(n => n.isManual);
-  hasManualEntry = hasMnST || hasMnSP || hasMnNV;
+  const hasMnSP = productRows.some(r => r.sanpham?.isManual);
+  hasManualEntry = hasMnST || hasMnNV || hasMnSP;
   const notice = document.getElementById('manualNotice');
   if (notice) notice.classList.toggle('show', hasManualEntry);
 }
@@ -1098,23 +1028,79 @@ document.addEventListener('click', e => {
 });
 
 // ============================================================
+// [5] MULTI-PRODUCT ROWS
+// ============================================================
+function addProductRow() {
+  const rowIdx = productRows.length;
+  productRows.push({ sanpham: null });
+  renderProductRows();
+}
+
+function removeSanpham(rowIdx) {
+  productRows[rowIdx].sanpham = null;
+  renderProductRowTag(rowIdx);
+  checkManualEntries();
+}
+
+function removeProductRow(rowIdx) {
+  productRows.splice(rowIdx, 1);
+  renderProductRows();
+  checkManualEntries();
+}
+
+function renderProductRows() {
+  const container = document.getElementById('productRowsContainer');
+  if (!container) return;
+
+  if (productRows.length === 0) {
+    container.innerHTML = `<div style="color:#aaa;font-size:12px;padding:8px;">Nhấn "➕ Thêm sản phẩm" để thêm.</div>`;
+    return;
+  }
+
+  container.innerHTML = productRows.map((row, i) => `
+    <div class="product-row" id="productRow_${i}">
+      <div class="product-row-header">
+        <span>📦 Sản phẩm #${i + 1}</span>
+        <button class="btn btn-danger btn-sm" type="button" onclick="removeProductRow(${i})">Xóa</button>
+      </div>
+      <div class="product-row-body">
+        <div class="form-group" style="margin:0;">
+          <div class="search-drop-wrap">
+            <!-- [4] Placeholder gợi ý format Mã - Tên -->
+            <input class="search-drop-input" id="inputSanpham_${i}" type="text"
+              placeholder="Gõ Mã hoặc Tên sản phẩm (VD: SP01 - Coca Cola)..." autocomplete="off"
+              oninput="filterDrop('sanpham_${i}',this.value)"
+              onfocus="filterDrop('sanpham_${i}',this.value)"
+              value="${row.sanpham ? (row.sanpham.isManual ? row.sanpham.name : fCodeName(row.sanpham.code, row.sanpham.name)) : ''}">
+            <div class="dropdown-list hidden" id="drop-sanpham_${i}-list"></div>
+            <div class="selected-tags" id="spTag_${i}"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  `).join('');
+
+  // Re-render tags cho các row đã có sanpham
+  productRows.forEach((row, i) => { if (row.sanpham) renderProductRowTag(i); });
+}
+
+// ============================================================
 // TẠO / SỬA KHAI BÁO
 // ============================================================
 function openCreateModal() {
   currentEditId = null;
-  dropSel = { sieuthi: null, sanpham: [], nhanvien: [] };
-
-  document.getElementById('inputSieuthi').value  = '';
+  dropSel = { sieuthi: null, nhanvien: [] };
+  productRows = []; // Reset multi-product
+  document.getElementById('inputSieuthi').value = '';
   document.getElementById('sieuthiSelected').innerHTML = '';
-  document.getElementById('inputSanpham').value  = '';
-  document.getElementById('sanphamSelected').innerHTML = '';
   document.getElementById('inputNhanvien').value = '';
   document.getElementById('nhanvienSelected').innerHTML = '';
   document.getElementById('formNgay').value = '';
-  setTimeVal('formTuGio', '');
-  setTimeVal('formDenGio', '');
+  document.getElementById('formTuGio').value = '';
+  document.getElementById('formDenGio').value = '';
   document.getElementById('manualNotice').classList.remove('show');
   document.getElementById('createModalTitle').textContent = '➕ Tạo Khai báo Biệt Kích';
+  addProductRow(); // Khởi tạo 1 dòng SP mặc định
   showModal('createModal');
 }
 
@@ -1122,50 +1108,50 @@ function openEditModal(id) {
   const d = (DB.get('declarations') || []).find(x => x.id === id);
   if (!d) return;
   currentEditId = id;
-
-  dropSel.sieuthi  = { id: d.sieuthiCode, code: d.sieuthiCode || '', name: d.sieuthiName, isManual: d.isManualSieuthi };
-  dropSel.sanpham  = [...(d.sanphamList  || [])]; // [4] restore mảng SP
+  dropSel.sieuthi = { id: d.sieuthiCode, code: d.sieuthiCode || '', name: d.sieuthiName, isManual: d.isManualSieuthi };
   dropSel.nhanvien = [...(d.nhanvienList || [])];
 
-  document.getElementById('inputSieuthi').value  = d.isManualSieuthi ? d.sieuthiName : fCodeName(d.sieuthiCode, d.sieuthiName);
-  document.getElementById('inputSanpham').value  = '';
+  // [5] Restore multi-product
+  productRows = (d.sanphamList || []).map(sp => ({ sanpham: { ...sp } }));
+
+  document.getElementById('inputSieuthi').value = d.isManualSieuthi ? d.sieuthiName : fCodeName(d.sieuthiCode, d.sieuthiName);
   document.getElementById('inputNhanvien').value = '';
   document.getElementById('formNgay').value = d.ngay;
-
-  // [3] Ghi giờ vào select
-  setTimeVal('formTuGio', d.tuGio || '');
-  setTimeVal('formDenGio', d.denGio || '');
+  document.getElementById('formTuGio').value = d.tuGio || '';
+  document.getElementById('formDenGio').value = d.denGio || '';
 
   renderTags('sieuthi');
-  renderTags('sanpham');
   renderTags('nhanvien');
+  renderProductRows();
   checkManualEntries();
   document.getElementById('createModalTitle').textContent = '✏ Sửa Khai báo Biệt Kích';
   showModal('createModal');
 }
 
 async function submitForm() {
-  const st   = dropSel.sieuthi;
-  const nv   = dropSel.nhanvien;
+  const st = dropSel.sieuthi;
+  const nv = dropSel.nhanvien;
   const ngay = document.getElementById('formNgay').value;
+  const tG = document.getElementById('formTuGio').value;
+  const dG = document.getElementById('formDenGio').value;
 
-  // [3] Đọc giờ từ select
-  const tG = getTimeVal('formTuGio');
-  const dG = getTimeVal('formDenGio');
-
-  if (!st)                           return toast('error', 'Chọn Siêu thị!');
-  if (dropSel.sanpham.length === 0)  return toast('error', 'Chọn ít nhất 1 Sản phẩm!');
-  if (!ngay)                         return toast('error', 'Chọn Ngày!');
-  if (nv.length === 0)               return toast('error', 'Chọn ít nhất 1 Nhân viên!');
+  if (!st) return toast('error', 'Chọn Siêu thị!');
+  if (productRows.length === 0) return toast('error', 'Thêm ít nhất 1 sản phẩm!');
+  // [5] Kiểm tra tất cả SP đã chọn
+  for (let i = 0; i < productRows.length; i++) {
+    if (!productRows[i].sanpham) return toast('error', `Sản phẩm #${i + 1} chưa được chọn!`);
+  }
+  if (!ngay) return toast('error', 'Chọn Ngày!');
+  if (nv.length === 0) return toast('error', 'Chọn ít nhất 1 Nhân viên!');
   const timeErr = validateTime(tG, dG);
   if (timeErr) return toast('error', timeErr);
 
-  // [4] Build sanphamList từ dropSel.sanpham
-  const sanphamList = dropSel.sanpham.map(sp => ({
-    id:       sp.id   || null,
-    code:     sp.code || '',
-    name:     sp.name,
-    isManual: sp.isManual || false
+  // [5] Build sanphamList từ productRows
+  const sanphamList = productRows.map(r => ({
+    id: r.sanpham.id || null,
+    code: r.sanpham.code || '',
+    name: r.sanpham.name,
+    isManual: r.sanpham.isManual || false
   }));
 
   let decls = DB.get('declarations') || [];
@@ -1182,11 +1168,13 @@ async function submitForm() {
     };
     DB.set('declarations', decls);
     logAction('SỬA ĐƠN', currentEditId);
+    // Đẩy lên Sheets
     if (!decls[idx].id.startsWith('LOCAL_')) {
       await SHEETS.write('updateStatus', { id: decls[idx].id, status: 'pending', rejectReason: '' }).catch(console.error);
     }
     toast('success', 'Cập nhật thành công!');
   } else {
+    // Tạo ID — nếu chưa có Sheets thì dùng LOCAL_ prefix
     const newId = SHEETS.canWrite
       ? 'BK' + Date.now().toString().slice(-8)
       : 'LOCAL_' + Date.now().toString().slice(-8);
@@ -1205,9 +1193,14 @@ async function submitForm() {
     decls.unshift(newDecl);
     DB.set('declarations', decls);
 
+    // Đẩy lên Sheets ngay
     const pushed = await pushDeclToSheets(newDecl);
-    toast(pushed ? 'success' : 'warning',
-      pushed ? '✅ Tạo mới và đồng bộ lên Google Sheets!' : '⚠ Tạo mới thành công (lưu local). Sync khi có mạng.');
+    if (pushed) {
+      // Cập nhật ID (không còn LOCAL_)
+      toast('success', '✅ Tạo mới và đã đồng bộ lên Google Sheets!');
+    } else {
+      toast('warning', '⚠ Tạo mới thành công (lưu local). Sync khi có mạng.');
+    }
     logAction('TẠO ĐƠN', newId);
   }
 
@@ -1216,7 +1209,7 @@ async function submitForm() {
 }
 
 // ============================================================
-// DUYỆT / TỪ CHỐI (Admin)
+// DUYỆT / TỪ CHỐI (chỉ Admin)
 // ============================================================
 function openRejectModal(id) {
   rejectTargetId = id;
@@ -1235,6 +1228,7 @@ async function confirmReject() {
     }
   });
   DB.set('declarations', decls);
+  // Sync lên Sheets
   for (const id of ids) {
     await updateDeclStatusInSheets(id, 'rejected', rs).catch(console.error);
   }
@@ -1247,7 +1241,8 @@ async function confirmReject() {
 
 async function deleteRecord(id) {
   if (!confirm('Xóa bản ghi này?')) return;
-  DB.set('declarations', (DB.get('declarations') || []).filter(x => x.id !== id));
+  let d = DB.get('declarations') || [];
+  DB.set('declarations', d.filter(x => x.id !== id));
   if (!id.startsWith('LOCAL_')) {
     await SHEETS.write('deleteDeclaration', { id }).catch(console.error);
   }
@@ -1263,6 +1258,7 @@ function openDetail(id) {
   const d = (DB.get('declarations') || []).find(x => x.id === id);
   if (!d) return;
 
+  // [5] Multi-product display
   const spHtml = (d.sanphamList || []).map((sp, i) =>
     `<div style="padding:4px 8px;background:#f0fff4;border-radius:4px;margin-bottom:4px;font-size:12px;">
       #${i + 1}: ${sp.isManual ? `<span class="manual-tag">⚠ ${sp.name}</span>` : `<b>${fCodeName(sp.code, sp.name)}</b>`}
@@ -1271,12 +1267,10 @@ function openDetail(id) {
 
   const manuals = [];
   if (d.isManualSieuthi) manuals.push(`⚠ Siêu thị nhập tay: ${d.sieuthiName}`);
-  (d.sanphamList  || []).filter(s => s.isManual).forEach(s => manuals.push(`⚠ SP nhập tay: ${s.name}`));
+  (d.sanphamList || []).filter(s => s.isManual).forEach(s => manuals.push(`⚠ SP nhập tay: ${s.name}`));
   (d.nhanvienList || []).filter(n => n.isManual).forEach(n => manuals.push(`⚠ NV nhập tay: ${n.name}`));
   const manualHtml = manuals.length
-    ? `<div style="background:#fff3cd;border:1px solid #ffc107;border-radius:4px;padding:8px;margin-top:10px;font-size:12px;">
-        <b>⚠ Dữ liệu nhập tay — cần gửi Admin:</b><br>${manuals.join('<br>')}
-       </div>`
+    ? `<div style="background:#fff3cd;border:1px solid #ffc107;border-radius:4px;padding:8px;margin-top:10px;font-size:12px;"><b>⚠ Dữ liệu nhập tay — cần gửi Admin:</b><br>${manuals.join('<br>')}</div>`
     : '';
 
   document.getElementById('detailModalBody').innerHTML = `
@@ -1287,19 +1281,16 @@ function openDetail(id) {
       <div><b>Ngày tạo:</b> ${fDate(d.createdAt)}</div>
       <div><b>Siêu thị:</b> ${fCodeName(d.sieuthiCode, d.sieuthiName)}</div>
       <div><b>Ngày BK:</b> ${fDate(d.ngay)}</div>
+      <!-- [3] Giờ 24h -->
       <div style="grid-column:span 2;"><b>Giờ:</b> ${fTime(d.tuGio)} → ${fTime(d.denGio)}</div>
     </div>
-    <div style="margin-top:12px;"><b>Danh sách Sản phẩm:</b>
-      <div style="margin-top:6px;">${spHtml || '<i style="color:#aaa">Chưa có</i>'}</div>
-    </div>
-    <div style="margin-top:10px;"><b>Nhân viên:</b>
-      ${(d.nhanvienList || []).map(n => n.isManual ? `<span class="manual-tag">⚠ ${n.name}</span>` : fCodeName(n.code, n.name)).join(', ')}
-    </div>
+    <!-- [5] Multi-product -->
+    <div style="margin-top:12px;"><b>Danh sách Sản phẩm:</b><div style="margin-top:6px;">${spHtml || '<i style="color:#aaa">Chưa có</i>'}</div></div>
+    <div style="margin-top:10px;"><b>Nhân viên:</b> ${(d.nhanvienList || []).map(n => n.isManual ? `<span class="manual-tag">⚠ ${n.name}</span>` : fCodeName(n.code, n.name)).join(', ')}</div>
     ${d.rejectReason ? `<div style="margin-top:10px;background:#ffebee;padding:8px;border-radius:4px;font-size:12px;"><b>Lý do từ chối:</b> ${d.rejectReason}</div>` : ''}
     ${manualHtml}`;
 
-  document.getElementById('detailModalFooter').innerHTML =
-    `<button class="btn btn-secondary" onclick="closeModal('detailModal')">Đóng</button>`;
+  document.getElementById('detailModalFooter').innerHTML = `<button class="btn btn-secondary" onclick="closeModal('detailModal')">Đóng</button>`;
   showModal('detailModal');
 }
 
@@ -1311,7 +1302,7 @@ function openManualListModal() {
   let stManual = [], spManual = [], nvManual = [];
   decls.forEach(d => {
     if (d.isManualSieuthi) stManual.push({ from: fCodeName(d.authorCode, d.authorName), value: d.sieuthiName, id: d.id });
-    (d.sanphamList  || []).filter(s => s.isManual).forEach(s => spManual.push({ from: fCodeName(d.authorCode, d.authorName), value: s.name, id: d.id }));
+    (d.sanphamList || []).filter(s => s.isManual).forEach(s => spManual.push({ from: fCodeName(d.authorCode, d.authorName), value: s.name, id: d.id }));
     (d.nhanvienList || []).filter(n => n.isManual).forEach(n => nvManual.push({ from: fCodeName(d.authorCode, d.authorName), value: n.name, id: d.id }));
   });
   const makeTable = (title, items) => {
@@ -1335,11 +1326,12 @@ function copyManualList() {
 // EXPORT & IMPORT
 // ============================================================
 function exportExcel() {
+  // [5] Flatten sanphamList thành cột SP1, SP2, ...
   const maxSP = Math.max(1, ...filteredDeclarations.map(d => (d.sanphamList || []).length));
   const spHeaders = [];
   for (let i = 1; i <= maxSP; i++) { spHeaders.push(`Mã SP${i}`, `Tên SP${i}`); }
 
-  const header = ['Mã Đơn','QLTP Mã','QLTP Tên','Siêu thị Mã','Siêu thị Tên','Ngày','Từ giờ','Đến giờ',...spHeaders,'DS NV','Trạng thái','Ngày tạo'];
+  const header = ['Mã Đơn', 'QLTP Mã', 'QLTP Tên', 'Siêu thị Mã', 'Siêu thị Tên', 'Ngày', 'Từ giờ', 'Đến giờ', ...spHeaders, 'DS NV', 'Trạng thái', 'Ngày tạo'];
   const data = filteredDeclarations.map(d => {
     const spCols = [];
     for (let i = 0; i < maxSP; i++) {
@@ -1349,7 +1341,9 @@ function exportExcel() {
     return [
       d.id, d.authorCode, d.authorName,
       d.sieuthiCode, d.sieuthiName,
-      fDate(d.ngay), fTime(d.tuGio), fTime(d.denGio),
+      fDate(d.ngay),
+      // [3] Format 24h khi export
+      fTime(d.tuGio), fTime(d.denGio),
       ...spCols,
       (d.nhanvienList || []).map(n => fCodeName(n.code, n.name)).join('; '),
       d.status, fDate(d.createdAt)
@@ -1364,8 +1358,9 @@ function exportExcel() {
 
 function downloadTemplateExcel() {
   const d = [
-    ['Siêu thị (Mã hoặc Tên)','Ngày (DD/MM/YYYY)','Từ giờ (HH:MM 24h)','Đến giờ (HH:MM 24h)','Mã SP (nhiều SP cách nhau ;)','Tên SP (nhiều SP cách nhau ;)','DS NV (cách nhau ;)'],
-    ['BHX_HCM_001','25/04/2026','08:00','20:00','1053090000397;9876543210','BÁNH DD AFC;Nước suối','268789 - Nguyễn Hải Phú; 27506 - Bá Thành']
+    // [5] Hỗ trợ nhiều SP — dùng dấu ; phân cách
+    ['Siêu thị (Mã hoặc Tên)', 'Ngày (DD/MM/YYYY)', 'Từ giờ (HH:MM 24h)', 'Đến giờ (HH:MM 24h)', 'Mã SP (nhiều SP cách nhau ;)', 'Tên SP (nhiều SP cách nhau ;)', 'DS NV (cách nhau ;)'],
+    ['BHX_HCM_001', '25/04/2026', '08:00', '20:00', '1053090000397;9876543210', 'BÁNH DD AFC;Nước suối', '268789 - Nguyễn Hải Phú; 27506 - Bá Thành']
   ];
   const ws = XLSX.utils.aoa_to_sheet(d);
   const wb = XLSX.utils.book_new();
@@ -1395,8 +1390,8 @@ function handleExcelUpload(e) {
 
 function parseImportKB(rows) {
   parsedBulkRows = [];
-  const mstST = DB.get('sieuthi')  || [];
-  const mstSP = DB.get('sanpham')  || [];
+  const mstST = DB.get('sieuthi') || [];
+  const mstSP = DB.get('sanpham') || [];
   const mstNV = DB.get('nhanvien') || [];
   let html = '', valid = 0, errors = 0;
 
@@ -1406,9 +1401,10 @@ function parseImportKB(rows) {
     const dt = String(r[1] || '').trim();
     const t1 = String(r[2] || '').trim();
     const t2 = String(r[3] || '').trim();
+    // [5] Nhiều SP cách nhau dấu ;
     const spCodes = String(r[4] || '').split(';').map(x => x.trim()).filter(Boolean);
     const spNames = String(r[5] || '').split(';').map(x => x.trim()).filter(Boolean);
-    const nvRaw   = String(r[6] || '').trim();
+    const nvRaw = String(r[6] || '').trim();
 
     let errs = [], isWarn = false;
     let stObj = mstST.find(s => String(s.name).toLowerCase() === st.toLowerCase() || String(s.code) === st);
@@ -1428,17 +1424,20 @@ function parseImportKB(rows) {
     if (t1 && t2) { const tErr = validateTime(t1, t2); if (tErr) errs.push('Giờ sai'); }
     else errs.push('Thiếu giờ');
 
+    // [5] Parse danh sách SP
     const sanphamList = spCodes.map((code, idx) => {
-      const name  = spNames[idx] || code;
+      const name = spNames[idx] || code;
       const found = mstSP.find(s => String(s.code) === code || String(s.name).toLowerCase() === name.toLowerCase());
       return found
         ? { id: found.id, code: found.code, name: found.name, isManual: false }
-        : { id: null, code: code || '', name, isManual: true };
+        : { id: null, code: code || '', name: name, isManual: true };
     });
     if (sanphamList.length === 0) errs.push('Thiếu SP');
 
+    // [4] Parse NV với format "Mã - Tên" hoặc "Mã Tên"
     let nvs = nvRaw.split(';').filter(x => x.trim()).map(n => {
       n = n.trim();
+      // Hỗ trợ "268789 - Nguyễn Hải Phú" và "268789"
       let code = '', name = n;
       const dashIdx = n.indexOf(' - ');
       if (dashIdx > 0) { code = n.substring(0, dashIdx).trim(); name = n.substring(dashIdx + 3).trim(); }
@@ -1469,7 +1468,7 @@ function parseImportKB(rows) {
 async function submitBulkImport() {
   let d = DB.get('declarations') || [];
   const newDecls = parsedBulkRows.map(r => ({
-    id: (SHEETS.canWrite ? 'BK' : 'LOCAL_') + Date.now().toString().slice(-8) + Math.random().toString(36).slice(-3),
+    id: SHEETS.canWrite ? 'BK' + Date.now().toString().slice(-8) + Math.random().toString(36).slice(-3) : 'LOCAL_' + Date.now().toString().slice(-8) + Math.random().toString(36).slice(-3),
     authorCode: currentUser.code, authorName: currentUser.name,
     sieuthiCode: r.stCode, sieuthiName: r.stName, isManualSieuthi: r.isManualST,
     ngay: r.ngay, tuGio: r.tuGio, denGio: r.denGio,
@@ -1480,6 +1479,7 @@ async function submitBulkImport() {
   d.unshift(...newDecls);
   DB.set('declarations', d);
 
+  // Đẩy lên Sheets
   let pushed = 0;
   for (const decl of newDecls) {
     const ok = await pushDeclToSheets(decl);
@@ -1527,7 +1527,7 @@ function openMasterDataModal() {
 }
 
 function switchMasterTab(t) {
-  const tabs = ['importData','sheetsConfig','users','sieuthi','sanpham','nhanvien'];
+  const tabs = ['importData', 'sheetsConfig', 'users', 'sieuthi', 'sanpham', 'nhanvien'];
   tabs.forEach(x => {
     const el = document.getElementById(`masterTab${cap(x)}`);
     if (el) el.classList.remove('active');
@@ -1538,7 +1538,7 @@ function switchMasterTab(t) {
   document.querySelectorAll('.tab-btn').forEach(btn => {
     if (btn.getAttribute('onclick')?.includes(`'${t}'`)) btn.classList.add('active');
   });
-  if (!['importData','sheetsConfig'].includes(t)) {
+  if (!['importData', 'sheetsConfig'].includes(t)) {
     const el = document.getElementById(`search${cap(t)}`);
     if (el) el.value = '';
     renderMasterList(t);
@@ -1557,22 +1557,20 @@ function renderMasterList(type) {
     const filtered = qltpList.filter(u => !q || String(u.code).toLowerCase().includes(q) || String(u.name).toLowerCase().includes(q));
     let rows = `<tr style="background:#fff3cd;"><td style="padding:6px;">admin</td><td style="padding:6px;">Admin BHX</td><td style="padding:6px;color:#666;font-weight:600;">Admin</td><td></td></tr>`;
     filtered.forEach(u => {
-      rows += `<tr><td style="padding:6px;">${u.code}</td><td style="padding:6px;">${u.name}</td><td style="padding:6px;color:var(--green);font-weight:600;">QLTP</td>
-        <td><button class="btn btn-sm btn-danger" onclick="delUser('${u.code}')">Xóa</button></td></tr>`;
+      // [4] Format Mã - Tên trong table
+      rows += `<tr><td style="padding:6px;">${u.code}</td><td style="padding:6px;">${u.name}</td><td style="padding:6px;color:var(--green);font-weight:600;">QLTP</td><td><button class="btn btn-sm btn-danger" onclick="delUser('${u.code}')">Xóa</button></td></tr>`;
     });
-    el.innerHTML = `<table style="width:100%;border-collapse:collapse;font-size:12px;">
-      <thead><tr style="background:#eee;"><th style="padding:6px;">Mã</th><th style="padding:6px;">Tên</th><th style="padding:6px;">Phân hệ</th><th></th></tr></thead>
-      <tbody>${rows}</tbody></table>`;
+    el.innerHTML = `<table style="width:100%;border-collapse:collapse;font-size:12px;"><thead><tr style="background:#eee;"><th style="padding:6px;">Mã</th><th style="padding:6px;">Tên</th><th style="padding:6px;">Phân hệ</th><th></th></tr></thead><tbody>${rows}</tbody></table>`;
   } else {
     const items = DB.get(type) || [];
     const filtered = items.filter(s => !q || String(s.code).toLowerCase().includes(q) || String(s.name).toLowerCase().includes(q));
     const limit = filtered.slice(0, 100);
-    let tbl = `<table style="width:100%;border-collapse:collapse;font-size:12px;">
-      <thead><tr style="background:#eee;"><th style="padding:6px;">Mã</th><th style="padding:6px;">Tên</th><th style="padding:6px;">Thêm</th><th></th></tr></thead><tbody>`;
+    let tbl = `<table style="width:100%;border-collapse:collapse;font-size:12px;"><thead><tr style="background:#eee;"><th style="padding:6px;">Mã</th><th style="padding:6px;">Tên</th><th style="padding:6px;">Thêm</th><th></th></tr></thead><tbody>`;
     tbl += limit.map(s => `<tr>
       <td style="padding:6px;">${s.code}</td>
+      <!-- [4] Hiển thị Mã - Tên ở cột tên -->
       <td style="padding:6px;">${s.name}</td>
-      <td style="padding:6px;color:#888;">${type === 'sieuthi' ? (s.qltpCode||'--') : (s.sieuthiCode||s.type||'')}</td>
+      <td style="padding:6px;color:#888;">${type === 'sieuthi' ? (s.qltpCode || '--') : (s.sieuthiCode || s.type || '')}</td>
       <td><button class="btn btn-sm btn-danger" onclick="delMaster('${type}','${s.id}')">Xóa</button></td>
     </tr>`).join('');
     tbl += `</tbody></table>`;
@@ -1581,6 +1579,7 @@ function renderMasterList(type) {
   }
 }
 
+// [2] addMasterUser chỉ còn thêm QLTP
 function addMasterUser() {
   const c = document.getElementById('newUserCode').value.trim();
   const n = document.getElementById('newUserName').value.trim();
@@ -1594,6 +1593,7 @@ function addMasterUser() {
   renderMasterList('users');
 }
 
+// [2] delUser chỉ xóa QLTP
 function delUser(code) {
   if (!confirm('Xóa tài khoản QLTP này?')) return;
   DB.set('qltpList', (DB.get('qltpList') || []).filter(u => u.code !== code));
@@ -1608,7 +1608,7 @@ function addMasterItem(type) {
   let items = DB.get(type) || [];
   if (items.find(x => String(x.code) === c)) return toast('error', 'Trùng mã!');
   const obj = { id: c, code: c, name: n };
-  if (type === 'sieuthi')  obj.qltpCode    = document.getElementById('newSieuthiQLTP').value.trim();
+  if (type === 'sieuthi') obj.qltpCode = document.getElementById('newSieuthiQLTP').value.trim();
   if (type === 'nhanvien') obj.sieuthiCode = document.getElementById('newNhanvienST').value.trim();
   items.push(obj);
   DB.set(type, items);
