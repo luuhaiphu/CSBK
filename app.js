@@ -833,29 +833,98 @@ function openImportModal() {
   showModal('modalImport');
 }
 
+// ── SỬA #1: Thêm cellDates:true để SheetJS tự convert date serial → JS Date ──
 function onFileImport(e) {
   const file = e.target.files[0]; if (!file) return;
   const reader = new FileReader();
   reader.onload = evt => {
-    const wb   = XLSX.read(new Uint8Array(evt.target.result), { type: 'array' });
+    const wb   = XLSX.read(new Uint8Array(evt.target.result), { type: 'array', cellDates: true });
     const rows = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], { header: 1, defval: '' });
     parseImport(rows.slice(1).filter(r => r.some(c => c)));
   };
   reader.readAsArrayBuffer(file);
 }
 
+// ── SỬA #2: 3 helper xử lý định dạng Excel ──────────────────────────────────
+
+// Convert Excel date (JS Date từ cellDates, serial number, hoặc DD/MM/YYYY) → YYYY-MM-DD
+function excelDateToISO(val) {
+  if (!val && val !== 0) return '';
+  // cellDates:true → JS Date object
+  if (val instanceof Date) {
+    const y = val.getFullYear();
+    const m = String(val.getMonth() + 1).padStart(2, '0');
+    const d = String(val.getDate()).padStart(2, '0');
+    return `${y}-${m}-${d}`;
+  }
+  const s = String(val).trim();
+  if (!s) return '';
+  // DD/MM/YYYY hoặc YYYY/MM/DD
+  if (s.includes('/')) {
+    const parts = s.split('/');
+    return parts[0].length === 4
+      ? `${parts[0]}-${parts[1].padStart(2,'0')}-${parts[2].padStart(2,'0')}`
+      : `${parts[2]}-${parts[1].padStart(2,'0')}-${parts[0].padStart(2,'0')}`;
+  }
+  // Excel serial number dạng số (46137...)
+  if (!isNaN(s) && Number(s) > 40000) {
+    const ms  = Math.round((Number(s) - 25569) * 86400 * 1000);
+    const dt  = new Date(ms);
+    const utc = new Date(dt.getTime() + dt.getTimezoneOffset() * 60000);
+    return `${utc.getFullYear()}-${String(utc.getMonth()+1).padStart(2,'0')}-${String(utc.getDate()).padStart(2,'0')}`;
+  }
+  return s;
+}
+
+// Convert Excel time (fraction 0-1, "8h30", "H:MM", "HH:MM") → HH:MM
+function excelTimeToHHMM(val) {
+  if (val === '' || val === null || val === undefined) return '';
+  // cellDates:true có thể trả về Date object cho ô time
+  if (val instanceof Date) {
+    return String(val.getHours()).padStart(2,'0') + ':' + String(val.getMinutes()).padStart(2,'0');
+  }
+  const s = String(val).trim();
+  if (/^\d{2}:\d{2}$/.test(s)) return s;
+  if (/^\d{1}:\d{2}$/.test(s)) return '0' + s;
+  // Dạng "8h30" hoặc "08h30"
+  const hStyle = s.match(/^(\d{1,2})[hH](\d{2})$/);
+  if (hStyle) return String(hStyle[1]).padStart(2,'0') + ':' + hStyle[2];
+  // Fraction 0-1 (Excel lưu giờ dạng thập phân)
+  if (!isNaN(s) && s !== '') {
+    const f = parseFloat(s);
+    if (f >= 0 && f < 2) {
+      const totalMin = Math.round(f * 24 * 60);
+      return String(Math.floor(totalMin / 60)).padStart(2,'0') + ':' + String(totalMin % 60).padStart(2,'0');
+    }
+  }
+  return s;
+}
+
+// Chuẩn hóa mã: bỏ .0, xử lý scientific notation (8.93E12 → "8934868100850")
+function cleanCode(val) {
+  if (val === '' || val === null || val === undefined) return '';
+  const s = String(val).trim();
+  if (!s) return '';
+  // Scientific notation hoặc float
+  const n = parseFloat(s);
+  if (!isNaN(n) && isFinite(n)) return String(Math.round(n));
+  return s;
+}
+
+// ── SỬA #3: parseImport dùng các helper mới ──────────────────────────────────
 function parseImport(rawRows) {
   importRows = [];
   let html = '';
   let okCount = 0, errCount = 0;
 
   rawRows.forEach((r, i) => {
-    const stCode  = String(r[0] || '').trim();
-    const dateRaw = String(r[1] || '').trim();
-    const tuGio   = normalizeTime(r[2]);
-    const denGio  = normalizeTime(r[3]);
-    const spCodes = String(r[4] || '').split(';').map(x=>x.trim()).filter(Boolean);
-    const nvCodes = String(r[5] || '').split(';').map(x=>x.trim()).filter(Boolean);
+    // Dùng helper thay cho String().trim() thô
+    const stCode = cleanCode(r[0]);
+    const tuGio  = excelTimeToHHMM(r[2]);
+    const denGio = excelTimeToHHMM(r[3]);
+    // Chấp nhận cả ";" và "," làm dấu phân cách mã SP/NV
+    const spCodes = String(r[4] || '').split(/[;,]/).map(x => cleanCode(x)).filter(Boolean);
+    const nvCodes = String(r[5] || '').split(/[;,]/).map(x => cleanCode(x)).filter(Boolean);
 
     const errs = [];
 
@@ -864,13 +933,8 @@ function parseImport(rawRows) {
     if (stObj && currentUser.role === 'qltp' && stObj.qltpCode !== currentUser.code)
       errs.push('ST ngoài phạm vi QLTP');
 
-    let ngay = '';
-    if (dateRaw.includes('/')) {
-      const parts = dateRaw.split('/');
-      ngay = parts[0].length === 4
-        ? `${parts[0]}-${parts[1].padStart(2,'0')}-${parts[2].padStart(2,'0')}`
-        : `${parts[2]}-${parts[1].padStart(2,'0')}-${parts[0].padStart(2,'0')}`;
-    } else { ngay = dateRaw; }
+    // Convert ngày bằng helper (xử lý JS Date, serial, DD/MM/YYYY)
+    const ngay = excelDateToISO(r[1]);
     if (!ngay || ngay.length < 8) errs.push('Sai định dạng ngày');
 
     const timeRgx = /^\d{2}:\d{2}$/;
@@ -901,9 +965,14 @@ function parseImport(rawRows) {
       importRows.push({ stCode, stName: stObj.name, ngay, tuGio, denGio, sanphamList, nhanvienList });
     }
 
+    // Hiển thị dateRaw thân thiện trong preview
+    const dateDisplay = ngay && ngay.length >= 8
+      ? ngay.split('-').reverse().join('/')
+      : String(r[1] || '');
+
     html += `<div class="preview-row ${hasErr ? 'err' : 'ok'}">
       <span style="width:28px;color:var(--gray-400);">#${i+2}</span>
-      <span>${hasErr ? '❌' : '✅'} ${stCode} | ${dateRaw} | ${tuGio}–${denGio}</span>
+      <span>${hasErr ? '❌' : '✅'} ${stCode} | ${dateDisplay} | ${tuGio}–${denGio}</span>
       ${errs.length ? `<span style="margin-left:auto;color:var(--red);font-size:11px;">${errs.join(', ')}</span>` : ''}
     </div>`;
   });
