@@ -499,19 +499,6 @@ tbody td:first-child { text-align: center; }
   font-size: 12px; margin-top: auto;
 }
 
-/* ── SHEETS CONFIG ── */
-.config-card {
-  background: var(--blue-light); border: 1px solid #90caf9;
-  border-radius: var(--radius); padding: 18px; margin-bottom: 16px;
-}
-.config-card h4 { color: var(--blue); margin-bottom: 10px; font-size: 14px; }
-.step-box {
-  background: var(--gray-50); border: 1px solid var(--border);
-  border-radius: var(--radius); padding: 16px; font-size: 12.5px;
-  line-height: 2; color: var(--gray-800);
-}
-.step-box b { color: var(--green-dark); }
-
 /* ── OFFLINE BANNER ── */
 .offline-banner {
   background: var(--orange); color: #fff;
@@ -854,7 +841,6 @@ tbody td:first-child { text-align: center; }
     <div class="modal-body">
       <div class="tabs">
         <button class="tab-btn active" onclick="switchTab('import')">📥 Import Data</button>
-        <button class="tab-btn" onclick="switchTab('sheets')">🔗 Google Sheets</button>
         <button class="tab-btn" onclick="switchTab('users')">👤 QLTP (<span id="cntQLTP">0</span>)</button>
         <button class="tab-btn" onclick="switchTab('sieuthi')">🏪 Siêu Thị (<span id="cntST">0</span>)</button>
         <button class="tab-btn" onclick="switchTab('sanpham')">📦 Sản Phẩm (<span id="cntSP">0</span>)</button>
@@ -913,42 +899,6 @@ tbody td:first-child { text-align: center; }
             ✅ Sau khi import xong → đẩy toàn bộ lên Google Sheets để các QLTP đồng bộ
           </div>
           <button class="btn btn-green btn-sm" onclick="pushMasterToSheets()">📤 Đẩy Master Data lên Sheets</button>
-        </div>
-      </div>
-
-      <!-- Tab: Sheets Config -->
-      <div id="tabSheets" class="tab-content">
-        <div class="config-card">
-          <h4>🔗 Kết Nối Google Apps Script</h4>
-          <p style="font-size:12px;color:#555;margin-bottom:14px;">Chỉ cần 1 URL Web App duy nhất — dùng cho cả đọc lẫn ghi.</p>
-          <div class="form-group">
-            <label style="font-weight:700;font-size:12px;display:block;margin-bottom:6px;">Web App URL</label>
-            <input type="text" id="cfgWebUrl" class="form-control"
-              placeholder="https://script.google.com/macros/s/.../exec">
-          </div>
-          <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:10px;">
-            <button class="btn btn-blue btn-sm" onclick="saveWebUrl()">💾 Lưu URL</button>
-            <button class="btn btn-green btn-sm" onclick="testConnection()">🔌 Test Kết Nối</button>
-          </div>
-          <div id="connTestResult" style="margin-top:10px;font-size:12.5px;"></div>
-        </div>
-
-        <div class="step-box">
-          <b>📖 HƯỚNG DẪN SETUP (3 BƯỚC)</b><br><br>
-          <b>BƯỚC 1 — Tạo Google Spreadsheet</b><br>
-          Vào <a href="https://sheets.google.com" target="_blank" style="color:var(--blue);">sheets.google.com</a> → Tạo file mới. Đặt tên tùy ý (VD: BHX Biệt Kích DB).<br><br>
-          <b>BƯỚC 2 — Tạo Apps Script & Deploy</b><br>
-          Trong Spreadsheet → menu <b>Tiện ích mở rộng → Apps Script</b><br>
-          Xóa code cũ → Copy code mới (nút bên dưới) → Dán vào → <b>Lưu (Ctrl+S)</b><br>
-          Nhấn <b>Triển khai → Triển khai mới → Web App</b><br>
-          &nbsp;&nbsp;• Thực thi với tư cách: <b>Tôi (Me)</b><br>
-          &nbsp;&nbsp;• Ai có quyền truy cập: <b>Bất kỳ ai (Anyone)</b><br>
-          → Triển khai → Cấp quyền → Copy URL Web App<br><br>
-          <b>BƯỚC 3 — Dán URL & Test</b><br>
-          Dán URL vào ô trên → Lưu → Test kết nối → Đẩy Master Data.
-        </div>
-        <div style="margin-top:12px;">
-          <button class="btn btn-gray btn-sm" onclick="copyGASCode()">📋 Copy Apps Script Code</button>
         </div>
       </div>
 
