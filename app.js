@@ -1,5 +1,5 @@
 // ============================================================
-// BHX BIỆT KÍCH — app.js (Đã tích hợp toàn bộ Patch)
+// BHX BIỆT KÍCH — app.js (Bản Tối Giản Tuyệt Đối)
 // Kiến trúc: Google Sheets (Apps Script) là source of truth duy nhất
 // Không dùng IndexedDB. Mọi thao tác ghi → Apps Script ngay lập tức.
 // Master data load từ Sheets sau khi login thành công.
@@ -9,8 +9,8 @@
 // 1. CẤU HÌNH & TRẠNG THÁI TOÀN CỤC
 // ============================================================
 
-// --- Apps Script URL (lưu vào localStorage chỉ để admin không cần nhập lại) ---
-let WEB_APP_URL = 'https://script.google.com/macros/s/AKfycbz_THAY_BANG_LINK_CUA_BAN_O_DAY/exec';
+// --- Apps Script URL (Gắn cố định, không cần cấu hình UI nữa) ---
+const WEB_APP_URL = 'https://script.google.com/macros/s/AKfycbz_THAY_BANG_LINK_CUA_BAN_O_DAY/exec';
 
 // --- Mật khẩu admin (lưu local, admin có thể đổi) ---
 const ADMIN_PASS_KEY = 'bhx_adminPass';
@@ -77,12 +77,10 @@ function fDate(iso) {
 function fTime(t) {
   if (!t) return '--';
   const s = String(t).trim();
-  // Xử lý cả "8:0", "08:00", "8:00", "800" nếu có
   const parts = s.split(':');
   if (parts.length >= 2) {
     return String(parts[0]).padStart(2, '0') + ':' + String(parts[1]).padStart(2, '0');
   }
-  // Nếu dạng số (800 → 08:00)
   if (/^\d{3,4}$/.test(s)) {
     const h = s.slice(0, s.length - 2);
     const m = s.slice(-2);
@@ -95,14 +93,11 @@ function fTime(t) {
 function normalizeTime(raw) {
   const s = String(raw || '').trim();
   if (!s) return '';
-  // Đã đúng HH:MM
   if (/^\d{2}:\d{2}$/.test(s)) return s;
-  // H:MM hoặc HH:M
   if (/^\d{1,2}:\d{1,2}$/.test(s)) {
     const [h, m] = s.split(':');
     return h.padStart(2, '0') + ':' + m.padStart(2, '0');
   }
-  // Số Excel (0.333... = 8:00)
   if (!isNaN(s) && s !== '') {
     const totalMin = Math.round(parseFloat(s) * 24 * 60);
     const h = Math.floor(totalMin / 60);
@@ -118,7 +113,6 @@ function genId() {
 
 function nowISO() { return new Date().toISOString(); }
 
-// Debounce
 function debounce(fn, ms) {
   let t;
   return (...args) => { clearTimeout(t); t = setTimeout(() => fn(...args), ms); };
@@ -129,7 +123,6 @@ function debounce(fn, ms) {
 // ============================================================
 
 async function gasGet(params) {
-  if (!WEB_APP_URL) throw new Error('Chưa cấu hình Web App URL!');
   const qs = new URLSearchParams(params).toString();
   const res = await fetch(`${WEB_APP_URL}?${qs}`);
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
@@ -137,7 +130,6 @@ async function gasGet(params) {
 }
 
 async function gasPost(payload) {
-  if (!WEB_APP_URL) throw new Error('Chưa cấu hình Web App URL!');
   const res = await fetch(WEB_APP_URL, {
     method: 'POST',
     headers: { 'Content-Type': 'text/plain' },
@@ -162,7 +154,6 @@ function switchLoginRole(role) {
   document.getElementById('loginError').style.display = 'none';
 }
 
-// Gợi ý QLTP khi gõ — CHỈ gọi Sheets nếu có URL, fallback local nếu có
 const onQLTPInput = debounce(async function(val) {
   const suggest = document.getElementById('qltpSuggest');
   const preview = document.getElementById('qltpPreview');
@@ -170,11 +161,9 @@ const onQLTPInput = debounce(async function(val) {
   const q = val.trim();
   if (!q) { suggest.classList.add('hidden'); return; }
 
-  // Tìm trong masterData nếu đã có (admin đã push lên Sheets và đã load)
   let list = masterData.qltpList;
 
-  // Nếu chưa có, thử load từ Sheets (trường hợp user chưa đăng nhập lần nào)
-  if (!list.length && WEB_APP_URL) {
+  if (!list.length) {
     try {
       const r = await gasGet({ action: 'getQltpList' });
       if (r.ok) {
@@ -225,7 +214,6 @@ async function doLogin() {
 
   showLoading('Đang xác thực...');
   try {
-    // Xác thực qua Sheets
     const r = await gasGet({ action: 'loginQLTP', code });
     if (!r.ok) {
       hideLoading();
@@ -242,23 +230,7 @@ async function doLogin() {
   }
 }
 
-// ── FIX #1: afterLogin — Admin vào được dù chưa có URL ──────
 async function afterLogin() {
-  const isAdmin = currentUser.role === 'admin';
-
-  // Admin không có URL → vào thẳng, mở config ngay
-  if (isAdmin && !WEB_APP_URL) {
-    document.getElementById('loginScreen').classList.add('hidden');
-    document.getElementById('appShell').classList.add('show');
-    setupUI();
-    setSyncStatus('error', 'Chưa có URL');
-    toast('warning', '⚠ Chưa có Web App URL — Vui lòng cấu hình trước');
-    // Mở thẳng Master Data → tab Sheets Config
-    openMasterModal();
-    switchTab('sheets');
-    return;
-  }
-
   showLoading('Đang tải dữ liệu...');
   try {
     await loadAllData();
@@ -293,7 +265,6 @@ async function loadAllData() {
   declarations         = (d.declarations || []).filter(x => x.rowStatus !== 'deleted');
   activityLog          = d.activityLog || [];
 
-  // QLTP chỉ thấy đơn của mình
   if (currentUser.role === 'qltp') {
     declarations = declarations.filter(x => x.authorCode === currentUser.code);
   }
@@ -322,23 +293,19 @@ function setupUI() {
   const isAdmin = currentUser.role === 'admin';
   const isQL    = currentUser.role === 'qltp';
 
-  // Header
   document.getElementById('headerUserName').textContent = `${currentUser.name}`;
   document.getElementById('headerSub').textContent = ` / ${isAdmin ? 'ADMIN' : 'QLTP'}`;
 
-  // Role bar
   const pill = document.getElementById('rolePill');
   pill.textContent = isAdmin ? '🔐 ADMIN' : '👤 QLTP';
   pill.className = `role-pill ${isAdmin ? 'admin' : 'qltp'}`;
   document.getElementById('roleUserText').textContent = `${currentUser.name} — ${currentUser.code}`;
   document.getElementById('adminObserverBadge').style.display = isAdmin ? '' : 'none';
 
-  // Buttons
   document.getElementById('adminActionsWrap').style.display = isAdmin ? '' : 'none';
   document.getElementById('btnCreate').style.display  = (isQL || isAdmin) ? '' : 'none';
   document.getElementById('btnImport').style.display  = (isQL || isAdmin) ? '' : 'none';
 
-  // Filter defaults
   const today = new Date().toISOString().split('T')[0];
   document.getElementById('fltFrom').value = today;
   document.getElementById('fltTo').value   = today;
@@ -399,7 +366,6 @@ function renderTable() {
     const spStr = (d.sanphamList || []).map(x => `${x.code}`).join('; ');
     const nvStr = (d.nhanvienList || []).map(x => `${x.code}`).join('; ');
 
-    // Hiển thị tên đầy đủ bên dưới (tooltip style)
     const spFull = (d.sanphamList || []).map(x => `${x.code} - ${x.name}`).join('\n');
     const nvFull = (d.nhanvienList || []).map(x => `${x.code} - ${x.name}`).join('\n');
 
@@ -450,7 +416,6 @@ function updateSelectionUI() {
 // 8. MULTI-SELECT DROPDOWN (Siêu thị / Sản phẩm / Nhân viên)
 // ============================================================
 
-// Chỉ tìm theo mã (code), hiển thị Mã - Tên
 const msSearchDebounced = debounce(function(field, q) {
   _msRender(field, q);
 }, 200);
@@ -467,17 +432,14 @@ function _msRender(field, q) {
 
   let items = masterData[key] || [];
 
-  // QLTP chỉ thấy ST của mình
   if (field === 'st' && currentUser.role === 'qltp') {
     items = items.filter(s => s.qltpCode === currentUser.code);
   }
-  // QLTP chỉ thấy NV thuộc ST của mình
   if (field === 'nv' && currentUser.role === 'qltp' && selST) {
     items = items.filter(n => !n.sieuthiCode || n.sieuthiCode === selST.code);
   }
 
   const upper = q.trim().toUpperCase();
-  // Chỉ tìm theo mã
   const filtered = upper
     ? items.filter(x => String(x.code).toUpperCase().includes(upper)).slice(0, 30)
     : items.slice(0, 30);
@@ -488,7 +450,6 @@ function _msRender(field, q) {
     return;
   }
 
-  // Đánh dấu đã chọn
   const selectedCodes = field === 'st'
     ? (selST ? [selST.code] : [])
     : field === 'sp' ? selSP.map(x => x.code) : selNV.map(x => x.code);
@@ -511,7 +472,6 @@ function msSelect(field, code, name) {
     document.getElementById('inpST').value = `${code} - ${name}`;
     document.getElementById('ddST').classList.add('hidden');
     renderTags('st');
-    // Sau khi chọn ST, cập nhật lại NV dropdown
     document.getElementById('inpNV').value = '';
     selNV = [];
     renderTags('nv');
@@ -563,7 +523,6 @@ function removeTag(field, idx) {
   renderTags(field);
 }
 
-// Đóng dropdown khi click ra ngoài
 document.addEventListener('click', e => {
   ['ddST','ddSP','ddNV'].forEach(id => {
     const el = document.getElementById(id);
@@ -617,7 +576,6 @@ function openEdit(id) {
 }
 
 async function submitCreate() {
-  // Validate
   if (!selST)            return toast('error', 'Chọn Siêu Thị!');
   if (!selSP.length)     return toast('error', 'Chọn ít nhất 1 Sản Phẩm!');
   if (!selNV.length)     return toast('error', 'Chọn ít nhất 1 Nhân Viên!');
@@ -642,7 +600,6 @@ async function submitCreate() {
     ngay,
     tuGio,
     denGio,
-    // Lưu dạng "mã1;mã2" trong Sheets, parse khi đọc
     sanphamList:  JSON.stringify(selSP),
     nhanvienList: JSON.stringify(selNV),
     rowStatus:    'active',
@@ -656,7 +613,6 @@ async function submitCreate() {
     const r = await gasPost({ action, row: payload });
     if (!r.ok) { hideLoading(); return toast('error', r.msg || 'Lỗi lưu!'); }
 
-    // Cập nhật local state
     const localObj = {
       ...payload,
       sanphamList:  selSP,
@@ -669,7 +625,6 @@ async function submitCreate() {
       declarations.unshift(localObj);
     }
 
-    // Log activity
     await logActivity(isEdit ? 'SỬA ĐƠN' : 'TẠO ĐƠN', id,
       `ST: ${selST.code} | SP: ${selSP.map(x=>x.code).join(';')} | NV: ${selNV.map(x=>x.code).join(';')}`);
 
@@ -775,7 +730,6 @@ async function logActivity(action, declId, detail) {
     detail:   detail || ''
   };
   activityLog.unshift(entry);
-  // Ghi lên Sheets (fire and forget)
   gasPost({ action: 'appendLog', row: entry }).catch(console.warn);
 }
 
@@ -893,7 +847,6 @@ function parseImport(rawRows) {
   rawRows.forEach((r, i) => {
     const stCode  = String(r[0] || '').trim();
     const dateRaw = String(r[1] || '').trim();
-    // ── FIX #3: Áp dụng normalizeTime cho giờ ──
     const tuGio   = normalizeTime(r[2]);
     const denGio  = normalizeTime(r[3]);
     const spCodes = String(r[4] || '').split(';').map(x=>x.trim()).filter(Boolean);
@@ -901,13 +854,11 @@ function parseImport(rawRows) {
 
     const errs = [];
 
-    // Validate ST
     const stObj = masterData.sieuthi.find(s => s.code === stCode);
     if (!stObj) errs.push(`Không tìm thấy mã ST "${stCode}"`);
     if (stObj && currentUser.role === 'qltp' && stObj.qltpCode !== currentUser.code)
       errs.push('ST ngoài phạm vi QLTP');
 
-    // Parse date
     let ngay = '';
     if (dateRaw.includes('/')) {
       const parts = dateRaw.split('/');
@@ -917,13 +868,11 @@ function parseImport(rawRows) {
     } else { ngay = dateRaw; }
     if (!ngay || ngay.length < 8) errs.push('Sai định dạng ngày');
 
-    // Validate time
     const timeRgx = /^\d{2}:\d{2}$/;
     if (!timeRgx.test(tuGio) || !timeRgx.test(denGio)) errs.push('Giờ phải định dạng HH:MM');
     else if (tuGio < '05:00' || denGio > '22:00') errs.push('Giờ ngoài 05:00–22:00');
     else if (tuGio >= denGio) errs.push('Từ giờ ≥ Đến giờ');
 
-    // Resolve SP
     const sanphamList = [];
     spCodes.forEach(code => {
       const sp = masterData.sanpham.find(x => x.code === code);
@@ -932,7 +881,6 @@ function parseImport(rawRows) {
     });
     if (!sanphamList.length && !errs.some(e=>e.includes('SP'))) errs.push('Thiếu mã SP');
 
-    // Resolve NV
     const nhanvienList = [];
     nvCodes.forEach(code => {
       const nv = masterData.nhanvien.find(x => x.code === code);
@@ -962,7 +910,6 @@ function parseImport(rawRows) {
   document.getElementById('btnDoImport').disabled = okCount === 0;
 }
 
-// ── FIX #4: doImport — dùng setValues thay appendRow (Batch Update) ──────
 async function doImport() {
   if (!importRows.length) return;
   showLoading(`Đang import ${importRows.length} dòng...`);
@@ -988,7 +935,6 @@ async function doImport() {
 
     const done = r.data?.count || newDecls.length;
 
-    // Cập nhật local state — map đúng sanphamList/nhanvienList object
     newDecls.forEach((d, idx) => {
       declarations.unshift({
         ...d,
@@ -1014,7 +960,6 @@ async function doImport() {
 
 function openMasterModal() {
   updateMasterChips();
-  loadCfgToForm();
   switchTab('import');
   showModal('modalMaster');
 }
@@ -1037,7 +982,7 @@ function updateMasterChips() {
 function setSafe(id, val) { const e = document.getElementById(id); if (e) e.textContent = val; }
 
 function switchTab(name) {
-  const tabs = ['import','sheets','users','sieuthi','sanpham','nhanvien','pass'];
+  const tabs = ['import','users','sieuthi','sanpham','nhanvien','pass'];
   tabs.forEach(t => {
     const c = document.getElementById(`tab${t.charAt(0).toUpperCase()+t.slice(1)}`);
     if (c) c.classList.remove('active');
@@ -1048,7 +993,7 @@ function switchTab(name) {
   document.querySelectorAll('.tab-btn').forEach(b => {
     if (b.getAttribute('onclick')?.includes(`'${name}'`)) b.classList.add('active');
   });
-  if (!['import','sheets','pass'].includes(name)) renderMasterList(name);
+  if (!['import','pass'].includes(name)) renderMasterList(name);
 }
 
 function renderMasterList(type) {
@@ -1059,7 +1004,6 @@ function renderMasterList(type) {
   const q = (document.getElementById(searchMap[type])?.value || '').trim().toUpperCase();
 
   let items = type === 'users' ? masterData.qltpList : masterData[type === 'sieuthi' ? 'sieuthi' : type === 'sanpham' ? 'sanpham' : 'nhanvien'];
-  // Filter by code only
   const filtered = q ? items.filter(x => String(x.code).toUpperCase().includes(q)) : items;
   const shown = filtered.slice(0, 150);
 
@@ -1213,7 +1157,6 @@ function parseMasterNV(rows) {
 // ============================================================
 
 async function pushMasterToSheets() {
-  if (!WEB_APP_URL) return toast('error', 'Chưa cấu hình Web App URL!');
   showLoading('Đang đẩy Master Data lên Sheets...');
   try {
     const r = await gasPost({
@@ -1231,36 +1174,6 @@ async function pushMasterToSheets() {
 }
 
 // ============================================================
-// 18. GOOGLE SHEETS CONFIG
-// ============================================================
-
-function loadCfgToForm() {
-  document.getElementById('cfgWebUrl').value = WEB_APP_URL;
-}
-
-function saveWebUrl() {
-  const url = document.getElementById('cfgWebUrl').value.trim();
-  if (!url) return toast('error', 'Nhập URL!');
-  WEB_APP_URL = url;
-  localStorage.setItem('bhx_webAppUrl', url);
-  toast('success', '✅ Đã lưu URL!');
-}
-
-async function testConnection() {
-  saveWebUrl();
-  const el = document.getElementById('connTestResult');
-  el.innerHTML = '⏳ Đang kiểm tra...';
-  try {
-    const r = await gasGet({ action: 'ping' });
-    el.innerHTML = r.ok
-      ? `<span style="color:var(--green);">✅ Kết nối thành công! Server: ${r.msg||'OK'}</span>`
-      : `<span style="color:var(--red);">❌ ${r.msg}</span>`;
-  } catch (err) {
-    el.innerHTML = `<span style="color:var(--red);">❌ Lỗi: ${err.message}</span>`;
-  }
-}
-
-// ============================================================
 // 19. ĐỔI MẬT KHẨU ADMIN
 // ============================================================
 
@@ -1273,229 +1186,6 @@ function changePass() {
   document.getElementById('cpOld').value = '';
   document.getElementById('cpNew').value = '';
   toast('success', '✅ Đổi mật khẩu thành công!');
-}
-
-// ============================================================
-// 20. COPY APPS SCRIPT CODE
-// ============================================================
-
-function copyGASCode() {
-  const code = `// ============================================================
-// BHX BIỆT KÍCH — Google Apps Script
-// Deploy: Extensions → Apps Script → Deploy → New Deployment
-//   Execute as: Me | Who has access: Anyone
-// ============================================================
-
-const SS = SpreadsheetApp.getActiveSpreadsheet();
-
-// Tên các sheet tab
-const SHEET = {
-  QLTP:         'qltp_list',
-  SIEUTHI:      'sieuthi',
-  SANPHAM:      'sanpham',
-  NHANVIEN:     'nhanvien',
-  DECLARATIONS: 'declarations',
-  ACTIVITY_LOG: 'activity_log'
-};
-
-// Headers cho từng sheet
-const HEADERS = {
-  [SHEET.QLTP]:         ['code','name'],
-  [SHEET.SIEUTHI]:      ['code','name','qltpCode','qltpName'],
-  [SHEET.SANPHAM]:      ['code','name','type'],
-  [SHEET.NHANVIEN]:     ['code','name','sieuthiCode'],
-  [SHEET.DECLARATIONS]: ['id','authorCode','authorName','sieuthiCode','sieuthiName',
-                         'ngay','tuGio','denGio','sanphamList','nhanvienList',
-                         'rowStatus','createdAt','updatedAt','deletedBy','deletedAt'],
-  [SHEET.ACTIVITY_LOG]: ['time','userCode','userName','action','declId','detail']
-};
-
-// ── Helpers ──
-function getSheet(name) {
-  let sh = SS.getSheetByName(name);
-  if (!sh) {
-    sh = SS.insertSheet(name);
-    sh.appendRow(HEADERS[name]);
-  }
-  return sh;
-}
-
-function sheetToObjects(sheetName) {
-  const sh = getSheet(sheetName);
-  const data = sh.getDataRange().getValues();
-  if (data.length < 2) return [];
-  const headers = data[0].map(h => String(h).trim());
-  return data.slice(1).map(row => {
-    const obj = {};
-    headers.forEach((h, i) => { obj[h] = row[i] !== undefined ? String(row[i]).trim() : ''; });
-    return obj;
-  }).filter(obj => obj[headers[0]]); // bỏ dòng trống
-}
-
-function ok(data, msg) {
-  return ContentService.createTextOutput(JSON.stringify({ ok: true, data, msg: msg||'OK' }))
-    .setMimeType(ContentService.MimeType.JSON);
-}
-function err(msg) {
-  return ContentService.createTextOutput(JSON.stringify({ ok: false, msg }))
-    .setMimeType(ContentService.MimeType.JSON);
-}
-function safeJson(str, fb) {
-  try { return JSON.parse(str) || fb; } catch { return fb; }
-}
-
-// ── GET ──
-function doGet(e) {
-  const action = e.parameter.action;
-  try {
-    if (action === 'ping') return ok(null, 'BHX Biệt Kích API — OK');
-
-    if (action === 'getQltpList') {
-      return ok(sheetToObjects(SHEET.QLTP));
-    }
-
-    if (action === 'loginQLTP') {
-      const code = e.parameter.code;
-      const list = sheetToObjects(SHEET.QLTP);
-      const found = list.find(x => x.code === code);
-      if (!found) return err('Mã QLTP không tồn tại!');
-      return ok(found);
-    }
-
-    if (action === 'getAllData') {
-      const role = e.parameter.role;
-      const code = e.parameter.code;
-
-      const qltpList   = sheetToObjects(SHEET.QLTP);
-      const sieuthi    = sheetToObjects(SHEET.SIEUTHI);
-      const sanpham    = sheetToObjects(SHEET.SANPHAM);
-      const nhanvien   = sheetToObjects(SHEET.NHANVIEN);
-      let   declRaw    = sheetToObjects(SHEET.DECLARATIONS);
-      const actLog     = sheetToObjects(SHEET.ACTIVITY_LOG).reverse().slice(0, 500);
-
-      // Parse JSON fields trong declarations
-      const declarations = declRaw.map(d => ({
-        ...d,
-        sanphamList:  safeJson(d.sanphamList,  []),
-        nhanvienList: safeJson(d.nhanvienList, [])
-      }));
-
-      // Admin thấy tất cả; QLTP chỉ thấy của mình
-      const filteredDecl = role === 'admin'
-        ? declarations
-        : declarations.filter(d => d.authorCode === code);
-
-      return ok({ qltpList, sieuthi, sanpham, nhanvien, declarations: filteredDecl, activityLog: actLog });
-    }
-
-    return err('Unknown GET action: ' + action);
-  } catch(e) {
-    return err('Server error: ' + e.toString());
-  }
-}
-
-// ── POST ──
-function doPost(e) {
-  try {
-    const payload = JSON.parse(e.postData.contents);
-    const action  = payload.action;
-
-    if (action === 'createDeclaration')  return createDeclaration(payload.row);
-    if (action === 'updateDeclaration')  return updateDeclaration(payload.row);
-    if (action === 'softDeleteDeclaration') return softDelete(payload.id, payload.deletedBy, payload.deletedAt);
-    if (action === 'batchCreateDeclarations') return batchCreate(payload.rows);
-    if (action === 'appendLog')          return appendLog(payload.row);
-    if (action === 'syncMasterData')     return syncMaster(payload);
-
-    return err('Unknown POST action: ' + action);
-  } catch(e) {
-    return err('Server error: ' + e.toString());
-  }
-}
-
-function createDeclaration(row) {
-  const sh = getSheet(SHEET.DECLARATIONS);
-  if (sh.getLastRow() <= 1) {
-    // Đảm bảo header đúng
-  }
-  sh.appendRow(HEADERS[SHEET.DECLARATIONS].map(h => row[h] || ''));
-  return ok(null, 'created');
-}
-
-function updateDeclaration(row) {
-  const sh   = getSheet(SHEET.DECLARATIONS);
-  const data = sh.getDataRange().getValues();
-  const headers = data[0].map(String);
-  const idCol   = headers.indexOf('id');
-  for (let i = 1; i < data.length; i++) {
-    if (String(data[i][idCol]) === String(row.id)) {
-      HEADERS[SHEET.DECLARATIONS].forEach((h, j) => {
-        if (row[h] !== undefined) sh.getRange(i+1, j+1).setValue(row[h]);
-      });
-      return ok(null, 'updated');
-    }
-  }
-  return err('ID not found: ' + row.id);
-}
-
-function softDelete(id, deletedBy, deletedAt) {
-  const sh   = getSheet(SHEET.DECLARATIONS);
-  const data = sh.getDataRange().getValues();
-  const headers  = data[0].map(String);
-  const idCol    = headers.indexOf('id');
-  const stCol    = headers.indexOf('rowStatus');
-  const delByCol = headers.indexOf('deletedBy');
-  const delAtCol = headers.indexOf('deletedAt');
-  for (let i = 1; i < data.length; i++) {
-    if (String(data[i][idCol]) === String(id)) {
-      if (stCol    >= 0) sh.getRange(i+1, stCol+1).setValue('deleted');
-      if (delByCol >= 0) sh.getRange(i+1, delByCol+1).setValue(deletedBy||'');
-      if (delAtCol >= 0) sh.getRange(i+1, delAtCol+1).setValue(deletedAt||'');
-      return ok(null, 'soft-deleted');
-    }
-  }
-  return err('ID not found: ' + id);
-}
-
-function batchCreate(rows) {
-  const sh = getSheet(SHEET.DECLARATIONS);
-  rows.forEach(row => {
-    sh.appendRow(HEADERS[SHEET.DECLARATIONS].map(h => row[h] || ''));
-  });
-  return ok({ count: rows.length }, 'batch created');
-}
-
-function appendLog(row) {
-  const sh = getSheet(SHEET.ACTIVITY_LOG);
-  sh.appendRow(HEADERS[SHEET.ACTIVITY_LOG].map(h => row[h] || ''));
-  return ok(null, 'logged');
-}
-
-function syncMaster(payload) {
-  // Ghi đè toàn bộ từng sheet master
-  _overwriteSheet(SHEET.QLTP,    payload.qltpList  || [], HEADERS[SHEET.QLTP]);
-  _overwriteSheet(SHEET.SIEUTHI, payload.sieuthi   || [], HEADERS[SHEET.SIEUTHI]);
-  _overwriteSheet(SHEET.SANPHAM, payload.sanpham   || [], HEADERS[SHEET.SANPHAM]);
-  _overwriteSheet(SHEET.NHANVIEN,payload.nhanvien  || [], HEADERS[SHEET.NHANVIEN]);
-  return ok(null, 'master synced');
-}
-
-function _overwriteSheet(sheetName, items, headers) {
-  const sh = getSheet(sheetName);
-  // Xóa tất cả dữ liệu cũ (trừ header)
-  const lastRow = sh.getLastRow();
-  if (lastRow > 1) sh.getRange(2, 1, lastRow-1, headers.length).clearContent();
-  // Ghi dữ liệu mới
-  if (items.length) {
-    const rows = items.map(item => headers.map(h => item[h] || ''));
-    sh.getRange(2, 1, rows.length, headers.length).setValues(rows);
-  }
-}
-`;
-
-  navigator.clipboard.writeText(code)
-    .then(() => toast('success', '✅ Đã copy Apps Script Code! Vào Extensions → Apps Script → Dán vào → Deploy'))
-    .catch(() => toast('error', 'Trình duyệt không cho phép copy. Hãy copy thủ công.'));
 }
 
 // ============================================================
