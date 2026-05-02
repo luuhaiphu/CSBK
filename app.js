@@ -1,491 +1,1074 @@
 // ============================================================
-// BHX BIỆT KÍCH — app.js (Refactored)
-// 
-// THAY ĐỔI CHÍNH:
-//   [1] Đồng bộ Google Sheets (thay localStorage)
-//   [2] Chỉ còn 2 role: admin + qltp (bỏ nganhhang)
-//   [3] Thời gian 24h (HH:mm)
-//   [4] Format hiển thị "Mã - Tên" nhất quán
-//   [5] Multi-product: nhiều SP trên 1 khai báo
+// BHX BIỆT KÍCH — app.js
+// Kiến trúc: Google Sheets (Apps Script) là source of truth duy nhất
+// Không dùng IndexedDB. Mọi thao tác ghi → Apps Script ngay lập tức.
+// Master data load từ Sheets sau khi login thành công.
 // ============================================================
 
 // ============================================================
-// HELPER FUNCTIONS
+// 1. CẤU HÌNH & TRẠNG THÁI TOÀN CỤC
 // ============================================================
-function cap(str) {
-  return str ? str.charAt(0).toUpperCase() + str.slice(1) : '';
-}
-function showModal(id) {
-  const el = document.getElementById(id);
-  if (el) el.classList.remove('hidden');
-}
-function closeModal(id) {
-  const el = document.getElementById(id);
-  if (el) el.classList.add('hidden');
-}
+
+// --- Apps Script URL (lưu vào localStorage chỉ để admin không cần nhập lại) ---
+let WEB_APP_URL = localStorage.getItem('bhx_webAppUrl') || '';
+
+// --- Mật khẩu admin (lưu local, admin có thể đổi) ---
+const ADMIN_PASS_KEY = 'bhx_adminPass';
+function getAdminPass() { return localStorage.getItem(ADMIN_PASS_KEY) || '24122004'; }
+function setAdminPass(p) { localStorage.setItem(ADMIN_PASS_KEY, p); }
+
+// --- State ---
+let currentUser   = null;  // { code, name, role: 'qltp'|'admin' }
+let masterData    = { qltpList: [], sieuthi: [], sanpham: [], nhanvien: [] };
+let declarations  = [];    // Array of declaration objects (active only for display)
+let activityLog   = [];    // Loaded from Sheets (sheet: activity_log)
+let filteredDecls = [];
+let selectedIds   = new Set();
+
+// Form selections state
+let selST = null;          // { code, name }
+let selSP = [];            // [{ code, name }]
+let selNV = [];            // [{ code, name }]
+let editingId = null;      // null = create, string = edit
+
+// Import state
+let importRows = [];       // Parsed, validated rows ready to submit
+
+// ============================================================
+// 2. TIỆN ÍCH
+// ============================================================
+
 function toast(type, msg) {
-  const c = document.getElementById('toastContainer');
-  if (!c) return;
-  const t = document.createElement('div');
-  t.className = 'toast ' + type;
-  t.textContent = msg;
-  c.appendChild(t);
-  setTimeout(() => t.remove(), 3500);
+  const wrap = document.getElementById('toastWrap');
+  const el = document.createElement('div');
+  el.className = `toast ${type}`;
+  const icons = { success: '✅', error: '❌', warning: '⚠', info: 'ℹ' };
+  el.innerHTML = `<span>${icons[type] || ''}</span><span>${msg}</span>`;
+  wrap.appendChild(el);
+  setTimeout(() => el.remove(), 3800);
 }
 
-// ============================================================
-// DATABASE — IndexedDB (local cache) + Google Sheets (sync)
-// ============================================================
-const RAM_DB = {};
-
-const DB = {
-  get: k => {
-    const val = RAM_DB['bhx_v5_' + k];
-    return val !== undefined ? JSON.parse(JSON.stringify(val)) : null;
-  },
-  set: (k, v) => {
-    RAM_DB['bhx_v5_' + k] = v;
-    saveToIDB('bhx_v5_' + k, v);
-  }
-};
-
-let idb;
-const idbReq = window.indexedDB.open('BHX_v5', 1);
-idbReq.onupgradeneeded = e => {
-  const db = e.target.result;
-  if (!db.objectStoreNames.contains('store')) db.createObjectStore('store');
-};
-idbReq.onsuccess = e => {
-  idb = e.target.result;
-  const tx = idb.transaction('store', 'readonly');
-  const store = tx.objectStore('store');
-  const reqAll = store.getAll();
-  const reqKeys = store.getAllKeys();
-  reqAll.onsuccess = () => {
-    reqKeys.onsuccess = () => {
-      reqKeys.result.forEach((key, i) => { RAM_DB[key] = reqAll.result[i]; });
-      initSystem();
-    };
-  };
-};
-idbReq.onerror = () => initSystem();
-
-function saveToIDB(key, value) {
-  if (!idb) return;
-  const tx = idb.transaction('store', 'readwrite');
-  tx.objectStore('store').put(value, key);
+function showLoading(msg = 'Đang xử lý...') {
+  document.getElementById('loadingOverlay').classList.add('show');
+  document.getElementById('loadingText').textContent = msg;
+}
+function hideLoading() {
+  document.getElementById('loadingOverlay').classList.remove('show');
 }
 
-// ============================================================
-// [1] GOOGLE SHEETS SYNC
-// Kiến trúc:
-//   - ĐỌC: Gọi Sheets API v4 (GET, public, cần API Key)
-//   - GHI/XÓA: Gọi Apps Script Web App (POST)
-//   - Cache cục bộ: IndexedDB — fallback khi offline
-// ============================================================
-
-const SHEETS = {
-  // Lấy config từ DB (admin nhập trong Master Data > Google Sheets tab)
-  get cfg() {
-    return DB.get('sheetsConfig') || {};
-  },
-
-  // Kiểm tra đã cấu hình đủ chưa
-  get ready() {
-    const c = this.cfg;
-    return !!(c.sheetId && c.apiKey);
-  },
-
-  get canWrite() {
-    return !!(this.cfg.webAppUrl);
-  },
-
-  // Cập nhật status badge
-  setStatus(state, msg) {
-    const dot = document.getElementById('syncDot');
-    const txt = document.getElementById('syncText');
-    if (!dot || !txt) return;
-    dot.className = 'sync-dot' + (state === 'syncing' ? ' syncing' : state === 'error' ? ' error' : '');
-    txt.textContent = msg;
-  },
-
-  // Đọc một sheet tab → trả về mảng object (dòng đầu là header)
-  async read(tabName) {
-    if (!this.ready) return null;
-    const { sheetId, apiKey } = this.cfg;
-    const url = `https://sheets.googleapis.com/v4/spreadsheets/${sheetId}/values/${encodeURIComponent(tabName)}?key=${apiKey}`;
-    const res = await fetch(url);
-    if (!res.ok) throw new Error(`Lỗi đọc sheet "${tabName}": ${res.status}`);
-    const data = await res.json();
-    const rows = data.values || [];
-    if (rows.length < 2) return [];
-    const headers = rows[0].map(h => String(h).trim());
-    return rows.slice(1).map(row => {
-      const obj = {};
-      headers.forEach((h, i) => { obj[h] = row[i] !== undefined ? String(row[i]).trim() : ''; });
-      return obj;
-    });
-  },
-
-  // Ghi dữ liệu qua Apps Script
-  async write(action, payload) {
-    if (!this.canWrite) throw new Error('Chưa cấu hình Web App URL!');
-    const res = await fetch(this.cfg.webAppUrl, {
-      method: 'POST',
-      headers: { 'Content-Type': 'text/plain' }, // avoid CORS preflight
-      body: JSON.stringify({ action, ...payload })
-    });
-    if (!res.ok) throw new Error(`Lỗi ghi: ${res.status}`);
-    return await res.json();
-  }
-};
-
-// ---- Hàm sync chính: kéo declarations từ Sheets ----
-async function syncFromSheets() {
-  if (!SHEETS.ready) {
-    toast('warning', 'Chưa cấu hình Google Sheets. Vào Admin > Master Data > Google Sheets.');
-    return;
-  }
-  SHEETS.setStatus('syncing', 'Đang sync...');
-  try {
-    const rows = await SHEETS.read('declarations');
-    if (!rows) { SHEETS.setStatus('error', 'Lỗi sync'); return; }
-
-    // Parse rows → declaration objects
-    const decls = rows.map(r => ({
-      id: r['id'] || '',
-      authorCode: r['authorCode'] || '',
-      authorName: r['authorName'] || '',
-      sieuthiCode: r['sieuthiCode'] || '',
-      sieuthiName: r['sieuthiName'] || '',
-      isManualSieuthi: r['isManualSieuthi'] === 'true',
-      ngay: r['ngay'] || '',
-      // [3] Thời gian 24h — lưu HH:mm, đọc HH:mm
-      tuGio: r['tuGio'] || '',
-      denGio: r['denGio'] || '',
-      // [5] Multi-product: lưu dạng JSON string trong sheet
-      sanphamList: safeParseJson(r['sanphamList'], []),
-      nhanvienList: safeParseJson(r['nhanvienList'], []),
-      status: r['status'] || 'pending',
-      rejectReason: r['rejectReason'] || '',
-      createdAt: r['createdAt'] || '',
-      updatedAt: r['updatedAt'] || ''
-    })).filter(d => d.id);
-
-    // Merge: ưu tiên Sheets, nhưng giữ local chưa upload (id bắt đầu bằng 'LOCAL_')
-    const local = DB.get('declarations') || [];
-    const localPending = local.filter(d => d.id.startsWith('LOCAL_'));
-    const merged = [...decls, ...localPending];
-    DB.set('declarations', merged);
-
-    SHEETS.setStatus('ok', `Đã sync ${decls.length} đơn`);
-    loadTable();
-    toast('success', `✅ Đồng bộ ${decls.length} đơn từ Google Sheets`);
-  } catch (err) {
-    SHEETS.setStatus('error', 'Lỗi sync');
-    toast('error', 'Lỗi sync: ' + err.message);
-    console.error(err);
-  }
+function setSyncStatus(state, msg) {
+  const dot = document.getElementById('syncDot');
+  const txt = document.getElementById('syncText');
+  dot.className = 'sync-dot' + (state === 'syncing' ? ' syncing' : state === 'error' ? ' error' : '');
+  txt.textContent = msg;
 }
 
-// ---- Đẩy 1 declaration lên Sheets ----
-async function pushDeclToSheets(decl) {
-  if (!SHEETS.canWrite) return false;
-  try {
-    SHEETS.setStatus('syncing', 'Đang gửi...');
-    await SHEETS.write('appendDeclaration', { row: serializeDecl(decl) });
-    SHEETS.setStatus('ok', 'Đã gửi');
-    return true;
-  } catch (err) {
-    SHEETS.setStatus('error', 'Lỗi ghi');
-    console.error('pushDeclToSheets error:', err);
-    return false;
-  }
+function showModal(id)  { document.getElementById(id).classList.remove('hidden'); }
+function closeModal(id) { document.getElementById(id).classList.add('hidden'); }
+
+function fDate(iso) {
+  if (!iso) return '';
+  const s = iso.includes('T') ? iso.split('T')[0] : iso;
+  const [y, m, d] = s.split('-');
+  return `${d}/${m}/${y}`;
 }
 
-// ---- Cập nhật trạng thái 1 declaration ----
-async function updateDeclStatusInSheets(id, status, reason) {
-  if (!SHEETS.canWrite) return false;
-  try {
-    await SHEETS.write('updateStatus', { id, status, rejectReason: reason || '' });
-    return true;
-  } catch (err) {
-    console.error('updateDeclStatusInSheets error:', err);
-    return false;
-  }
-}
-
-// Serialize declaration → Sheets row (flat)
-function serializeDecl(d) {
-  return {
-    id: d.id,
-    authorCode: d.authorCode,
-    authorName: d.authorName,
-    sieuthiCode: d.sieuthiCode || '',
-    sieuthiName: d.sieuthiName || '',
-    isManualSieuthi: String(d.isManualSieuthi || false),
-    ngay: d.ngay,
-    tuGio: d.tuGio || '',
-    denGio: d.denGio || '',
-    sanphamList: JSON.stringify(d.sanphamList || []),
-    nhanvienList: JSON.stringify(d.nhanvienList || []),
-    status: d.status,
-    rejectReason: d.rejectReason || '',
-    createdAt: d.createdAt || '',
-    updatedAt: new Date().toISOString()
-  };
-}
-
-function safeParseJson(str, fallback) {
-  if (!str) return fallback;
-  try { 
-    // Làm sạch chuỗi: Loại bỏ các dấu nháy kép thừa do Apps Script/Sheets tự động thêm vào
-    let cleanStr = String(str).replace(/^"|"$/g, '').replace(/\\"/g, '"');
-    return JSON.parse(cleanStr) || fallback; 
-  }
-  catch (err) { 
-    // Ghi nhận lỗi ra bảng điều khiển (Console) để lập trình viên dễ theo dõi
-    console.warn("Lỗi parse JSON:", str);
-    return fallback; 
-  }
-}
-
-// ---- Test kết nối ----
-async function testSheetConnection() {
-  saveSheetConfig();
-  const el = document.getElementById('sheetTestResult');
-  if (!SHEETS.ready) { el.innerHTML = '<span style="color:red;">❌ Chưa đủ thông tin (cần Spreadsheet ID + API Key)</span>'; return; }
-  el.innerHTML = '⏳ Đang kiểm tra...';
-  try {
-    const rows = await SHEETS.read('declarations');
-    el.innerHTML = `<span style="color:green;">✅ Kết nối thành công! Tìm thấy ${rows ? rows.length : 0} dòng trong sheet "declarations".</span>`;
-    SHEETS.setStatus('ok', 'Đã kết nối');
-  } catch (err) {
-    el.innerHTML = `<span style="color:red;">❌ Lỗi: ${err.message}</span>`;
-    SHEETS.setStatus('error', 'Lỗi kết nối');
-  }
-}
-
-function saveSheetConfig() {
-  DB.set('sheetsConfig', {
-    sheetId: document.getElementById('cfgSheetId').value.trim(),
-    apiKey: document.getElementById('cfgApiKey').value.trim(),
-    webAppUrl: document.getElementById('cfgWebAppUrl').value.trim()
-  });
-  toast('success', 'Đã lưu cấu hình Google Sheets!');
-}
-
-// ---- Copy Apps Script boilerplate ----
-function copyAppsScriptCode() {
-  const code = `// BHX Biệt Kích - Google Apps Script
-// Deploy: Extensions > Apps Script > Deploy > Web App > Execute as Me > Anyone
-
-const SS = SpreadsheetApp.getActiveSpreadsheet();
-
-function doPost(e) {
-  try {
-    const data = JSON.parse(e.postData.contents);
-    const action = data.action;
-    
-    if (action === 'appendDeclaration') {
-      return appendDeclaration(data.row);
-    } else if (action === 'updateStatus') {
-      return updateStatus(data.id, data.status, data.rejectReason);
-    } else if (action === 'deleteDeclaration') {
-      return deleteDeclaration(data.id);
-    }
-    return ok('Unknown action');
-  } catch(err) {
-    return err_(err.toString());
-  }
-}
-
-function appendDeclaration(row) {
-  const sh = SS.getSheetByName('declarations') || SS.insertSheet('declarations');
-  // Tạo header nếu chưa có
-  if (sh.getLastRow() === 0) {
-    sh.appendRow(['id','authorCode','authorName','sieuthiCode','sieuthiName','isManualSieuthi',
-      'ngay','tuGio','denGio','sanphamList','nhanvienList','status','rejectReason','createdAt','updatedAt']);
-  }
-  sh.appendRow([row.id, row.authorCode, row.authorName, row.sieuthiCode, row.sieuthiName,
-    row.isManualSieuthi, row.ngay, row.tuGio, row.denGio, row.sanphamList, row.nhanvienList,
-    row.status, row.rejectReason, row.createdAt, row.updatedAt]);
-  return ok('appended');
-}
-
-function updateStatus(id, status, rejectReason) {
-  const sh = SS.getSheetByName('declarations');
-  if (!sh) return err_('Sheet not found');
-  const data = sh.getDataRange().getValues();
-  const headers = data[0];
-  const idCol = headers.indexOf('id');
-  const statusCol = headers.indexOf('status');
-  const rejectCol = headers.indexOf('rejectReason');
-  const updatedCol = headers.indexOf('updatedAt');
-  for (let i = 1; i < data.length; i++) {
-    if (String(data[i][idCol]) === String(id)) {
-      if (statusCol >= 0) sh.getRange(i+1, statusCol+1).setValue(status);
-      if (rejectCol >= 0) sh.getRange(i+1, rejectCol+1).setValue(rejectReason || '');
-      if (updatedCol >= 0) sh.getRange(i+1, updatedCol+1).setValue(new Date().toISOString());
-      return ok('updated');
-    }
-  }
-  return err_('ID not found');
-}
-
-function deleteDeclaration(id) {
-  const sh = SS.getSheetByName('declarations');
-  if (!sh) return err_('Sheet not found');
-  const data = sh.getDataRange().getValues();
-  const idCol = data[0].indexOf('id');
-  for (let i = data.length - 1; i >= 1; i--) {
-    if (String(data[i][idCol]) === String(id)) {
-      sh.deleteRow(i+1);
-      return ok('deleted');
-    }
-  }
-  return err_('ID not found');
-}
-
-function ok(msg) { return ContentService.createTextOutput(JSON.stringify({ok:true,msg})).setMimeType(ContentService.MimeType.JSON); }
-function err_(msg) { return ContentService.createTextOutput(JSON.stringify({ok:false,msg})).setMimeType(ContentService.MimeType.JSON); }
-`;
-  navigator.clipboard.writeText(code).then(() => toast('success', '✅ Đã copy Apps Script code! Dán vào Extensions > Apps Script'));
-}
-
-// ============================================================
-// GLOBAL STATE
-// ============================================================
-let currentUser = null, currentRole = null;
-let filteredDeclarations = [];
-let selectedIds = new Set();
-let parsedBulkRows = [];
-let rejectTargetId = null;
-let currentEditId = null;
-// [4] dropSel: sieuthi (single), nhanvien (multi)
-// [5] productRows: array cho multi-product
-let dropSel = { sieuthi: null, nhanvien: [] };
-let productRows = []; // [{ sanpham: null|{id,code,name,isManual}, dropId: 'pr_0' }, ...]
-let hasManualEntry = false;
-
-// ============================================================
-// FORMAT — [3] 24h time / [4] "Mã - Tên"
-// ============================================================
-
-// [3] Hiển thị giờ 24h: HH:mm
 function fTime(t) {
   if (!t) return '--';
-  // Đảm bảo luôn HH:mm, loại bỏ seconds nếu có
   const parts = String(t).split(':');
-  return `${String(parts[0]).padStart(2,'0')}:${String(parts[1] || '00').padStart(2,'0')}`;
+  return `${String(parts[0]).padStart(2,'0')}:${String(parts[1]||'00').padStart(2,'0')}`;
 }
 
-// [4] Format "Mã - Tên"
-function fCodeName(code, name) {
-  if (code && name) return `${code} - ${name}`;
-  return name || code || '--';
+function genId() {
+  return 'BK' + Date.now().toString(36).toUpperCase() + Math.random().toString(36).slice(2,5).toUpperCase();
 }
 
-function fDate(isoDate) {
-  if (!isoDate) return '';
-  if (isoDate.includes('T')) isoDate = isoDate.split('T')[0];
-  const parts = isoDate.split('-');
-  if (parts.length === 3 && parts[0].length === 4) return `${parts[2]}/${parts[1]}/${parts[0]}`;
-  return isoDate;
+function nowISO() { return new Date().toISOString(); }
+
+// Debounce
+function debounce(fn, ms) {
+  let t;
+  return (...args) => { clearTimeout(t); t = setTimeout(() => fn(...args), ms); };
 }
 
 // ============================================================
-// INIT
+// 3. APPS SCRIPT — GATEWAY DUY NHẤT
 // ============================================================
-function initSystem() {
-  initSeedData();
-  loadSheetConfigToForm();
-  updateStatChips();
+
+async function gasGet(params) {
+  if (!WEB_APP_URL) throw new Error('Chưa cấu hình Web App URL!');
+  const qs = new URLSearchParams(params).toString();
+  const res = await fetch(`${WEB_APP_URL}?${qs}`);
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  return await res.json();
 }
 
-function initSeedData() {
-  if (!DB.get('declarations')) DB.set('declarations', []);
-  if (!DB.get('historyLog')) DB.set('historyLog', []);
-  if (!DB.get('adminPass')) DB.set('adminPass', '24122004');
-  if (!DB.get('sieuthi')) DB.set('sieuthi', []);
-  if (!DB.get('sanpham')) DB.set('sanpham', []);
-  if (!DB.get('nhanvien')) DB.set('nhanvien', []);
-  if (!DB.get('qltpList')) DB.set('qltpList', []);
-  // [2] Bỏ nhUsers hoàn toàn
-}
-
-function loadSheetConfigToForm() {
-  const cfg = DB.get('sheetsConfig') || {};
-  const el1 = document.getElementById('cfgSheetId');
-  const el2 = document.getElementById('cfgApiKey');
-  const el3 = document.getElementById('cfgWebAppUrl');
-  if (el1) el1.value = cfg.sheetId || '';
-  if (el2) el2.value = cfg.apiKey || '';
-  if (el3) el3.value = cfg.webAppUrl || '';
-}
-
-function updateStatChips() {
-  const st = DB.get('sieuthi') || [];
-  const sp = DB.get('sanpham') || [];
-  const nv = DB.get('nhanvien') || [];
-  const ql = DB.get('qltpList') || [];
-  setSafe('statQLTP', `QLTP: ${ql.length}`);
-  setSafe('statST', `Siêu thị: ${st.length}`);
-  setSafe('statFMCG', `SP FMCG: ${sp.filter(x => x.type === 'fmcg').length}`);
-  setSafe('statFresh', `SP Fresh: ${sp.filter(x => x.type === 'fresh').length}`);
-  setSafe('statNV', `NV: ${nv.length}`);
-  setSafe('countSieuthi', st.length);
-  setSafe('countSanpham', sp.length);
-  setSafe('countNhanvien', nv.length);
-  // [2] Chỉ còn admin + qltp
-  setSafe('countUsers', ql.length + 1);
-}
-
-function setSafe(id, val) {
-  const el = document.getElementById(id);
-  if (el) el.textContent = val;
-}
-
-function logAction(action, detail) {
-  let hist = DB.get('historyLog') || [];
-  hist.unshift({
-    time: new Date().toLocaleString('vi-VN'),
-    user: currentUser ? fCodeName(currentUser.code, currentUser.name) : '?',
-    role: currentRole || '?',
-    action, detail
+async function gasPost(payload) {
+  if (!WEB_APP_URL) throw new Error('Chưa cấu hình Web App URL!');
+  const res = await fetch(WEB_APP_URL, {
+    method: 'POST',
+    headers: { 'Content-Type': 'text/plain' },
+    body: JSON.stringify(payload)
   });
-  if (hist.length > 300) hist.pop();
-  DB.set('historyLog', hist);
-}
-
-// [3] Validate thời gian 24h
-function validateTime(t1, t2) {
-  if (!t1 || !t2) return 'Vui lòng nhập đủ Từ giờ và Đến giờ!';
-  if (t1 < '05:00' || t1 > '22:00' || t2 < '05:00' || t2 > '22:00')
-    return 'Giờ hoạt động chỉ từ 05:00 đến 22:00!';
-  if (t1 >= t2) return "Từ giờ phải nhỏ hơn Đến giờ!";
-  return null;
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  return await res.json();
 }
 
 // ============================================================
-// [1] MASTER DATA IMPORT
+// 4. LOGIN
 // ============================================================
-// 1. Cập nhật importMasterFile
-function importMasterFile(type, input) {
+
+let loginRole = 'qltp';
+
+function switchLoginRole(role) {
+  loginRole = role;
+  document.getElementById('tabQLTP').classList.toggle('active', role === 'qltp');
+  document.getElementById('tabAdmin').classList.toggle('active', role === 'admin');
+  document.getElementById('loginFieldQLTP').style.display  = role === 'qltp'  ? '' : 'none';
+  document.getElementById('loginFieldAdmin').style.display = role === 'admin' ? '' : 'none';
+  document.getElementById('loginError').style.display = 'none';
+}
+
+// Gợi ý QLTP khi gõ — CHỈ gọi Sheets nếu có URL, fallback local nếu có
+const onQLTPInput = debounce(async function(val) {
+  const suggest = document.getElementById('qltpSuggest');
+  const preview = document.getElementById('qltpPreview');
+  preview.style.display = 'none';
+  const q = val.trim();
+  if (!q) { suggest.classList.add('hidden'); return; }
+
+  // Tìm trong masterData nếu đã có (admin đã push lên Sheets và đã load)
+  let list = masterData.qltpList;
+
+  // Nếu chưa có, thử load từ Sheets (trường hợp user chưa đăng nhập lần nào)
+  if (!list.length && WEB_APP_URL) {
+    try {
+      const r = await gasGet({ action: 'getQltpList' });
+      if (r.ok) {
+        list = r.data || [];
+        masterData.qltpList = list;
+      }
+    } catch (_) { /* offline ok */ }
+  }
+
+  const filtered = list.filter(x => String(x.code).startsWith(q)).slice(0, 10);
+  if (!filtered.length) { suggest.classList.add('hidden'); return; }
+
+  suggest.innerHTML = filtered.map(x =>
+    `<div class="suggest-item" onclick="selectQLTP('${x.code}','${x.name.replace(/'/g,"\\'")}')">
+      <span class="code">${x.code}</span>
+      <span class="name">${x.name}</span>
+    </div>`
+  ).join('');
+  suggest.classList.remove('hidden');
+}, 250);
+
+function selectQLTP(code, name) {
+  document.getElementById('inpQLTPCode').value = code;
+  document.getElementById('qltpSuggest').classList.add('hidden');
+  document.getElementById('qltpPreviewText').textContent = `${code} — ${name}`;
+  document.getElementById('qltpPreview').style.display = '';
+}
+
+async function doLogin() {
+  const errEl = document.getElementById('loginError');
+  errEl.style.display = 'none';
+
+  if (loginRole === 'admin') {
+    const pass = document.getElementById('inpAdminPass').value;
+    if (pass !== getAdminPass()) {
+      errEl.textContent = '❌ Sai mật khẩu Admin!';
+      errEl.style.display = '';
+      return;
+    }
+    currentUser = { code: 'admin', name: 'Admin BHX', role: 'admin' };
+    await afterLogin();
+    return;
+  }
+
+  // QLTP
+  const code = document.getElementById('inpQLTPCode').value.trim();
+  if (!code) { errEl.textContent = '❌ Vui lòng nhập mã QLTP!'; errEl.style.display = ''; return; }
+
+  showLoading('Đang xác thực...');
+  try {
+    // Xác thực qua Sheets
+    const r = await gasGet({ action: 'loginQLTP', code });
+    if (!r.ok) {
+      hideLoading();
+      errEl.textContent = `❌ ${r.msg || 'Mã QLTP không tồn tại trong hệ thống!'}`;
+      errEl.style.display = '';
+      return;
+    }
+    currentUser = { code: r.data.code, name: r.data.name, role: 'qltp' };
+    await afterLogin();
+  } catch (err) {
+    hideLoading();
+    errEl.textContent = '❌ Lỗi kết nối: ' + err.message;
+    errEl.style.display = '';
+  }
+}
+
+async function afterLogin() {
+  showLoading('Đang tải dữ liệu...');
+  try {
+    await loadAllData();
+    hideLoading();
+    document.getElementById('loginScreen').classList.add('hidden');
+    document.getElementById('appShell').classList.add('show');
+    setupUI();
+    applyFilter();
+    setSyncStatus('ok', 'Đã kết nối');
+    logActivity('ĐĂNG NHẬP', null, '');
+  } catch (err) {
+    hideLoading();
+    document.getElementById('loginError').textContent = '❌ Lỗi tải dữ liệu: ' + err.message;
+    document.getElementById('loginError').style.display = '';
+  }
+}
+
+// ============================================================
+// 5. LOAD DỮ LIỆU TỪ SHEETS
+// ============================================================
+
+async function loadAllData() {
+  setSyncStatus('syncing', 'Đang tải...');
+  const r = await gasGet({ action: 'getAllData', role: currentUser.role, code: currentUser.code });
+  if (!r.ok) throw new Error(r.msg || 'Lỗi tải dữ liệu');
+
+  const d = r.data;
+  masterData.qltpList  = d.qltpList  || [];
+  masterData.sieuthi   = d.sieuthi   || [];
+  masterData.sanpham   = d.sanpham   || [];
+  masterData.nhanvien  = d.nhanvien  || [];
+  declarations         = (d.declarations || []).filter(x => x.rowStatus !== 'deleted');
+  activityLog          = d.activityLog || [];
+
+  // QLTP chỉ thấy đơn của mình
+  if (currentUser.role === 'qltp') {
+    declarations = declarations.filter(x => x.authorCode === currentUser.code);
+  }
+
+  updateMasterChips();
+  setSyncStatus('ok', `Đã sync — ${declarations.length} đơn`);
+}
+
+async function refreshData() {
+  showLoading('Đang đồng bộ...');
+  try {
+    await loadAllData();
+    applyFilter();
+    toast('success', `✅ Đã đồng bộ ${declarations.length} khai báo`);
+  } catch (err) {
+    toast('error', 'Lỗi sync: ' + err.message);
+    setSyncStatus('error', 'Lỗi sync');
+  } finally { hideLoading(); }
+}
+
+// ============================================================
+// 6. SETUP UI SAU LOGIN
+// ============================================================
+
+function setupUI() {
+  const isAdmin = currentUser.role === 'admin';
+  const isQL    = currentUser.role === 'qltp';
+
+  // Header
+  document.getElementById('headerUserName').textContent = `${currentUser.name}`;
+  document.getElementById('headerSub').textContent = ` / ${isAdmin ? 'ADMIN' : 'QLTP'}`;
+
+  // Role bar
+  const pill = document.getElementById('rolePill');
+  pill.textContent = isAdmin ? '🔐 ADMIN' : '👤 QLTP';
+  pill.className = `role-pill ${isAdmin ? 'admin' : 'qltp'}`;
+  document.getElementById('roleUserText').textContent = `${currentUser.name} — ${currentUser.code}`;
+  document.getElementById('adminObserverBadge').style.display = isAdmin ? '' : 'none';
+
+  // Buttons
+  document.getElementById('adminActionsWrap').style.display = isAdmin ? '' : 'none';
+  document.getElementById('btnCreate').style.display  = (isQL || isAdmin) ? '' : 'none';
+  document.getElementById('btnImport').style.display  = (isQL || isAdmin) ? '' : 'none';
+
+  // Filter defaults
+  const today = new Date().toISOString().split('T')[0];
+  document.getElementById('fltFrom').value = today;
+  document.getElementById('fltTo').value   = today;
+}
+
+function onHeaderUserClick() {
+  if (currentUser.role === 'admin') openMasterModal();
+}
+
+function doLogout() {
+  currentUser  = null;
+  declarations = [];
+  activityLog  = [];
+  masterData   = { qltpList: [], sieuthi: [], sanpham: [], nhanvien: [] };
+  selectedIds.clear();
+
+  document.getElementById('appShell').classList.remove('show');
+  document.getElementById('loginScreen').classList.remove('hidden');
+  document.getElementById('inpQLTPCode').value  = '';
+  document.getElementById('inpAdminPass').value = '';
+  document.getElementById('qltpPreview').style.display = 'none';
+  document.getElementById('loginError').style.display  = 'none';
+  switchLoginRole('qltp');
+  setSyncStatus('error', 'Offline');
+}
+
+// ============================================================
+// 7. FILTER & TABLE
+// ============================================================
+
+function applyFilter() {
+  const fST   = document.getElementById('fltST').value.trim().toUpperCase();
+  const fFrom = document.getElementById('fltFrom').value;
+  const fTo   = document.getElementById('fltTo').value;
+
+  filteredDecls = declarations.filter(d => {
+    if (fST && !String(d.sieuthiCode).toUpperCase().includes(fST)) return false;
+    if (fFrom && d.ngay < fFrom) return false;
+    if (fTo   && d.ngay > fTo)   return false;
+    return true;
+  });
+
+  document.getElementById('recordCount').textContent = `Tổng: ${filteredDecls.length} bản ghi`;
+  renderTable();
+}
+
+function renderTable() {
+  const tbody = document.getElementById('tableBody');
+  if (!filteredDecls.length) {
+    tbody.innerHTML = `<tr><td colspan="10">
+      <div class="empty-state"><div class="icon">📋</div><p>Không có dữ liệu phù hợp</p></div>
+    </td></tr>`;
+    return;
+  }
+
+  tbody.innerHTML = filteredDecls.map((d, i) => {
+    const checked = selectedIds.has(d.id) ? 'checked' : '';
+    const spStr = (d.sanphamList || []).map(x => `${x.code}`).join('; ');
+    const nvStr = (d.nhanvienList || []).map(x => `${x.code}`).join('; ');
+
+    // Hiển thị tên đầy đủ bên dưới (tooltip style)
+    const spFull = (d.sanphamList || []).map(x => `${x.code} - ${x.name}`).join('\n');
+    const nvFull = (d.nhanvienList || []).map(x => `${x.code} - ${x.name}`).join('\n');
+
+    let actions = `<button class="btn btn-sm btn-gray" onclick="openDetail('${d.id}')">👁 Xem</button> `;
+    if (currentUser.role === 'qltp' && d.authorCode === currentUser.code) {
+      actions += `<button class="btn btn-sm btn-blue" onclick="openEdit('${d.id}')">✏ Sửa</button> `;
+      actions += `<button class="btn btn-sm btn-red" onclick="softDelete('${d.id}')">🗑</button>`;
+    }
+    if (currentUser.role === 'admin') {
+      actions += `<button class="btn btn-sm btn-blue" onclick="openEdit('${d.id}')">✏ Sửa</button> `;
+      actions += `<button class="btn btn-sm btn-red" onclick="softDelete('${d.id}')">🗑</button>`;
+    }
+
+    return `<tr>
+      <td><input type="checkbox" ${checked} onchange="toggleSelect('${d.id}',this.checked)"></td>
+      <td class="idx-cell">${i+1}</td>
+      <td style="font-size:12px;"><b style="color:var(--green);">${d.authorCode}</b><br><span style="color:var(--gray-600);">${d.authorName}</span></td>
+      <td style="font-size:12px;"><b>${d.sieuthiCode}</b><br><span style="color:var(--gray-600);font-size:11px;">${d.sieuthiName}</span></td>
+      <td style="font-weight:700;color:var(--blue);white-space:nowrap;">${fDate(d.ngay)}</td>
+      <td style="white-space:nowrap;font-size:12px;">${fTime(d.tuGio)} → ${fTime(d.denGio)}</td>
+      <td style="font-size:11px;max-width:180px;" title="${spFull}">${spStr || '--'}</td>
+      <td style="font-size:11px;max-width:160px;" title="${nvFull}">${nvStr || '--'}</td>
+      <td style="font-size:11px;color:var(--gray-600);">${fDate(d.createdAt)}</td>
+      <td style="white-space:nowrap;">${actions}</td>
+    </tr>`;
+  }).join('');
+}
+
+function toggleSelect(id, checked) {
+  checked ? selectedIds.add(id) : selectedIds.delete(id);
+  updateSelectionUI();
+}
+
+function toggleSelectAll(checked) {
+  filteredDecls.forEach(d => checked ? selectedIds.add(d.id) : selectedIds.delete(d.id));
+  document.querySelectorAll('#tableBody input[type=checkbox]').forEach(cb => cb.checked = checked);
+  updateSelectionUI();
+}
+
+function updateSelectionUI() {
+  const n = selectedIds.size;
+  document.getElementById('selectedInfo').textContent = n > 0 ? `Đã chọn ${n}` : '';
+  const showDel = n > 0 && currentUser.role === 'admin';
+  document.getElementById('btnBulkDel').style.display = showDel ? '' : 'none';
+}
+
+// ============================================================
+// 8. MULTI-SELECT DROPDOWN (Siêu thị / Sản phẩm / Nhân viên)
+// ============================================================
+
+// Chỉ tìm theo mã (code), hiển thị Mã - Tên
+const msSearchDebounced = debounce(function(field, q) {
+  _msRender(field, q);
+}, 200);
+
+function msSearch(field, q) {
+  msSearchDebounced(field, q);
+}
+
+function _msRender(field, q) {
+  const key = field === 'st' ? 'sieuthi' : field === 'sp' ? 'sanpham' : 'nhanvien';
+  const ddId = field === 'st' ? 'ddST' : field === 'sp' ? 'ddSP' : 'ddNV';
+  const dd = document.getElementById(ddId);
+  if (!dd) return;
+
+  let items = masterData[key] || [];
+
+  // QLTP chỉ thấy ST của mình
+  if (field === 'st' && currentUser.role === 'qltp') {
+    items = items.filter(s => s.qltpCode === currentUser.code);
+  }
+  // QLTP chỉ thấy NV thuộc ST của mình
+  if (field === 'nv' && currentUser.role === 'qltp' && selST) {
+    items = items.filter(n => !n.sieuthiCode || n.sieuthiCode === selST.code);
+  }
+
+  const upper = q.trim().toUpperCase();
+  // Chỉ tìm theo mã
+  const filtered = upper
+    ? items.filter(x => String(x.code).toUpperCase().includes(upper)).slice(0, 30)
+    : items.slice(0, 30);
+
+  if (!filtered.length) {
+    dd.innerHTML = `<div class="ms-no-result">Không tìm thấy mã "${q}" — Liên hệ Hải Phú 268789</div>`;
+    dd.classList.remove('hidden');
+    return;
+  }
+
+  // Đánh dấu đã chọn
+  const selectedCodes = field === 'st'
+    ? (selST ? [selST.code] : [])
+    : field === 'sp' ? selSP.map(x => x.code) : selNV.map(x => x.code);
+
+  dd.innerHTML = filtered.map(item => {
+    const isSel = selectedCodes.includes(item.code);
+    return `<div class="ms-option ${isSel ? 'selected' : ''}"
+      onmousedown="msSelect('${field}','${item.code}','${item.name.replace(/'/g,"\\'")}')">
+      <span class="opt-code">${item.code}</span>
+      <span class="opt-name">${item.name}</span>
+      ${isSel ? '<span style="color:var(--green);font-weight:700;">✓</span>' : ''}
+    </div>`;
+  }).join('');
+  dd.classList.remove('hidden');
+}
+
+function msSelect(field, code, name) {
+  if (field === 'st') {
+    selST = { code, name };
+    document.getElementById('inpST').value = `${code} - ${name}`;
+    document.getElementById('ddST').classList.add('hidden');
+    renderTags('st');
+    // Sau khi chọn ST, cập nhật lại NV dropdown
+    document.getElementById('inpNV').value = '';
+    selNV = [];
+    renderTags('nv');
+    return;
+  }
+  if (field === 'sp') {
+    if (!selSP.find(x => x.code === code)) {
+      selSP.push({ code, name });
+      renderTags('sp');
+    }
+    document.getElementById('inpSP').value = '';
+    document.getElementById('ddSP').classList.add('hidden');
+    return;
+  }
+  if (field === 'nv') {
+    if (!selNV.find(x => x.code === code)) {
+      selNV.push({ code, name });
+      renderTags('nv');
+    }
+    document.getElementById('inpNV').value = '';
+    document.getElementById('ddNV').classList.add('hidden');
+    return;
+  }
+}
+
+function renderTags(field) {
+  if (field === 'st') {
+    const c = document.getElementById('tagsST');
+    c.innerHTML = selST
+      ? `<div class="tag-chip">${selST.code} - ${selST.name}<span class="rm" onmousedown="removeTag('st',null)">×</span></div>`
+      : '';
+  }
+  if (field === 'sp') {
+    document.getElementById('tagsSP').innerHTML = selSP.map((x, i) =>
+      `<div class="tag-chip">${x.code} - ${x.name}<span class="rm" onmousedown="removeTag('sp',${i})">×</span></div>`
+    ).join('');
+  }
+  if (field === 'nv') {
+    document.getElementById('tagsNV').innerHTML = selNV.map((x, i) =>
+      `<div class="tag-chip">${x.code} - ${x.name}<span class="rm" onmousedown="removeTag('nv',${i})">×</span></div>`
+    ).join('');
+  }
+}
+
+function removeTag(field, idx) {
+  if (field === 'st') { selST = null; document.getElementById('inpST').value = ''; }
+  if (field === 'sp') selSP.splice(idx, 1);
+  if (field === 'nv') selNV.splice(idx, 1);
+  renderTags(field);
+}
+
+// Đóng dropdown khi click ra ngoài
+document.addEventListener('click', e => {
+  ['ddST','ddSP','ddNV'].forEach(id => {
+    const el = document.getElementById(id);
+    if (el && !el.parentElement?.contains(e.target)) el.classList.add('hidden');
+  });
+  document.getElementById('qltpSuggest')?.classList.add('hidden');
+});
+
+// ============================================================
+// 9. TẠO / SỬA KHAI BÁO
+// ============================================================
+
+function openCreateModal() {
+  editingId = null;
+  selST = null; selSP = []; selNV = [];
+  document.getElementById('inpST').value    = '';
+  document.getElementById('inpSP').value    = '';
+  document.getElementById('inpNV').value    = '';
+  document.getElementById('inpNgay').value  = '';
+  document.getElementById('inpTuGio').value = '';
+  document.getElementById('inpDenGio').value= '';
+  document.getElementById('tagsST').innerHTML = '';
+  document.getElementById('tagsSP').innerHTML = '';
+  document.getElementById('tagsNV').innerHTML = '';
+  document.getElementById('createTitle').textContent = '➕ Tạo Khai Báo Biệt Kích';
+  showModal('modalCreate');
+}
+
+function openEdit(id) {
+  const d = declarations.find(x => x.id === id);
+  if (!d) return;
+  editingId = id;
+
+  selST = { code: d.sieuthiCode, name: d.sieuthiName };
+  selSP = [...(d.sanphamList  || [])];
+  selNV = [...(d.nhanvienList || [])];
+
+  document.getElementById('inpST').value    = `${d.sieuthiCode} - ${d.sieuthiName}`;
+  document.getElementById('inpSP').value    = '';
+  document.getElementById('inpNV').value    = '';
+  document.getElementById('inpNgay').value  = d.ngay;
+  document.getElementById('inpTuGio').value = d.tuGio  || '';
+  document.getElementById('inpDenGio').value= d.denGio || '';
+
+  renderTags('st');
+  renderTags('sp');
+  renderTags('nv');
+
+  document.getElementById('createTitle').textContent = '✏ Sửa Khai Báo Biệt Kích';
+  showModal('modalCreate');
+}
+
+async function submitCreate() {
+  // Validate
+  if (!selST)            return toast('error', 'Chọn Siêu Thị!');
+  if (!selSP.length)     return toast('error', 'Chọn ít nhất 1 Sản Phẩm!');
+  if (!selNV.length)     return toast('error', 'Chọn ít nhất 1 Nhân Viên!');
+  const ngay  = document.getElementById('inpNgay').value;
+  const tuGio = document.getElementById('inpTuGio').value;
+  const denGio= document.getElementById('inpDenGio').value;
+  if (!ngay)  return toast('error', 'Chọn Ngày!');
+  if (!tuGio || !denGio) return toast('error', 'Nhập đủ Từ giờ và Đến giờ!');
+  if (tuGio < '05:00' || tuGio > '22:00' || denGio < '05:00' || denGio > '22:00')
+    return toast('error', 'Giờ phải trong khoảng 05:00 – 22:00!');
+  if (tuGio >= denGio) return toast('error', 'Từ giờ phải nhỏ hơn Đến giờ!');
+
+  const isEdit = !!editingId;
+  const id = editingId || genId();
+
+  const payload = {
+    id,
+    authorCode:   currentUser.code,
+    authorName:   currentUser.name,
+    sieuthiCode:  selST.code,
+    sieuthiName:  selST.name,
+    ngay,
+    tuGio,
+    denGio,
+    // Lưu dạng "mã1;mã2" trong Sheets, parse khi đọc
+    sanphamList:  JSON.stringify(selSP),
+    nhanvienList: JSON.stringify(selNV),
+    rowStatus:    'active',
+    createdAt:    isEdit ? (declarations.find(x=>x.id===id)?.createdAt || nowISO()) : nowISO(),
+    updatedAt:    nowISO()
+  };
+
+  showLoading(isEdit ? 'Đang cập nhật...' : 'Đang lưu...');
+  try {
+    const action = isEdit ? 'updateDeclaration' : 'createDeclaration';
+    const r = await gasPost({ action, row: payload });
+    if (!r.ok) { hideLoading(); return toast('error', r.msg || 'Lỗi lưu!'); }
+
+    // Cập nhật local state
+    const localObj = {
+      ...payload,
+      sanphamList:  selSP,
+      nhanvienList: selNV
+    };
+    if (isEdit) {
+      const idx = declarations.findIndex(x => x.id === id);
+      if (idx >= 0) declarations[idx] = localObj;
+    } else {
+      declarations.unshift(localObj);
+    }
+
+    // Log activity
+    await logActivity(isEdit ? 'SỬA ĐƠN' : 'TẠO ĐƠN', id,
+      `ST: ${selST.code} | SP: ${selSP.map(x=>x.code).join(';')} | NV: ${selNV.map(x=>x.code).join(';')}`);
+
+    closeModal('modalCreate');
+    applyFilter();
+    toast('success', isEdit ? '✅ Cập nhật thành công!' : '✅ Khai báo thành công!');
+  } catch (err) {
+    toast('error', 'Lỗi: ' + err.message);
+  } finally { hideLoading(); }
+}
+
+// ============================================================
+// 10. SOFT DELETE
+// ============================================================
+
+async function softDelete(id) {
+  if (!confirm('Xóa khai báo này?\n(Dữ liệu trên Google Sheets vẫn được giữ lại với trạng thái "đã xóa")')) return;
+  showLoading('Đang xóa...');
+  try {
+    const r = await gasPost({ action: 'softDeleteDeclaration', id, deletedBy: currentUser.code, deletedAt: nowISO() });
+    if (!r.ok) { hideLoading(); return toast('error', r.msg || 'Lỗi xóa!'); }
+
+    declarations = declarations.filter(x => x.id !== id);
+    selectedIds.delete(id);
+
+    await logActivity('XÓA ĐƠN', id, '(soft delete — vẫn còn trên Sheets)');
+    applyFilter();
+    toast('success', '🗑 Đã xóa (có thể khôi phục trên Google Sheets)');
+  } catch (err) {
+    toast('error', 'Lỗi: ' + err.message);
+  } finally { hideLoading(); }
+}
+
+async function bulkDelete() {
+  if (!selectedIds.size) return;
+  if (!confirm(`Xóa ${selectedIds.size} khai báo đã chọn?`)) return;
+  showLoading('Đang xóa...');
+  const ids = [...selectedIds];
+  try {
+    for (const id of ids) {
+      await gasPost({ action: 'softDeleteDeclaration', id, deletedBy: currentUser.code, deletedAt: nowISO() });
+    }
+    declarations = declarations.filter(x => !selectedIds.has(x.id));
+    selectedIds.clear();
+    await logActivity('XÓA NHIỀU', ids.join(','), `${ids.length} bản ghi`);
+    updateSelectionUI();
+    applyFilter();
+    toast('success', `🗑 Đã xóa ${ids.length} khai báo`);
+  } catch (err) {
+    toast('error', 'Lỗi: ' + err.message);
+  } finally { hideLoading(); }
+}
+
+// ============================================================
+// 11. DETAIL VIEW
+// ============================================================
+
+function openDetail(id) {
+  const d = declarations.find(x => x.id === id);
+  if (!d) return;
+
+  const spHtml = (d.sanphamList || []).map(x =>
+    `<span class="tag" style="margin:2px;">${x.code} - ${x.name}</span>`).join('');
+  const nvHtml = (d.nhanvienList || []).map(x =>
+    `<span class="tag" style="margin:2px;background:var(--blue-light);color:var(--blue);">${x.code} - ${x.name}</span>`).join('');
+
+  document.getElementById('detailBody').innerHTML = `
+    <div class="detail-grid" style="margin-bottom:16px;">
+      <div class="detail-item"><label>Mã Khai Báo</label><div class="val">${d.id}</div></div>
+      <div class="detail-item"><label>Ngày Tạo</label><div class="val">${fDate(d.createdAt)}</div></div>
+      <div class="detail-item"><label>QLTP</label><div class="val">${d.authorCode} - ${d.authorName}</div></div>
+      <div class="detail-item"><label>Siêu Thị</label><div class="val">${d.sieuthiCode} - ${d.sieuthiName}</div></div>
+      <div class="detail-item"><label>Ngày BK</label><div class="val" style="color:var(--blue);font-size:15px;">${fDate(d.ngay)}</div></div>
+      <div class="detail-item"><label>Giờ BK</label><div class="val">${fTime(d.tuGio)} → ${fTime(d.denGio)}</div></div>
+    </div>
+    <div style="margin-bottom:14px;">
+      <div class="detail-item"><label>Sản Phẩm</label></div>
+      <div style="margin-top:6px;">${spHtml || '<span style="color:var(--gray-400);">Chưa có</span>'}</div>
+    </div>
+    <div>
+      <div class="detail-item"><label>Nhân Viên</label></div>
+      <div style="margin-top:6px;">${nvHtml || '<span style="color:var(--gray-400);">Chưa có</span>'}</div>
+    </div>
+    ${d.updatedAt && d.updatedAt !== d.createdAt ? `
+    <div style="margin-top:14px;padding-top:12px;border-top:1px solid var(--border);font-size:12px;color:var(--gray-600);">
+      Cập nhật lần cuối: ${fDate(d.updatedAt)}
+    </div>` : ''}
+  `;
+  showModal('modalDetail');
+}
+
+// ============================================================
+// 12. ACTIVITY LOG
+// ============================================================
+
+async function logActivity(action, declId, detail) {
+  const entry = {
+    time:     nowISO(),
+    userCode: currentUser.code,
+    userName: currentUser.name,
+    action,
+    declId:   declId || '',
+    detail:   detail || ''
+  };
+  activityLog.unshift(entry);
+  // Ghi lên Sheets (fire and forget)
+  gasPost({ action: 'appendLog', row: entry }).catch(console.warn);
+}
+
+function openHistoryModal() {
+  document.getElementById('adminHistBtn').style.display =
+    currentUser.role === 'admin' ? '' : 'none';
+  document.getElementById('histSearch').value = '';
+  renderHistory();
+  showModal('modalHistory');
+}
+
+function renderHistory() {
+  const q   = document.getElementById('histSearch').value.toLowerCase().trim();
+  const role = currentUser.role;
+
+  let log = role === 'admin'
+    ? activityLog
+    : activityLog.filter(h => h.userCode === currentUser.code);
+
+  if (q) {
+    log = log.filter(h =>
+      String(h.declId).toLowerCase().includes(q) ||
+      String(h.userCode).toLowerCase().includes(q) ||
+      String(h.action).toLowerCase().includes(q)
+    );
+  }
+
+  const tbody = document.getElementById('histBody');
+  tbody.innerHTML = log.length ? log.slice(0, 200).map(h => `<tr>
+    <td style="white-space:nowrap;">${new Date(h.time).toLocaleString('vi-VN')}</td>
+    <td><b style="color:var(--green);">${h.userCode}</b><br><span style="font-size:11px;color:var(--gray-600);">${h.userName}</span></td>
+    <td><b>${h.action}</b></td>
+    <td style="font-size:11px;">${h.declId || '--'}</td>
+    <td style="font-size:11px;color:var(--gray-600);">${h.detail || ''}</td>
+  </tr>`).join('')
+  : `<tr><td colspan="5" align="center" style="padding:20px;color:var(--gray-400);">Chưa có lịch sử</td></tr>`;
+}
+
+async function clearHistory() {
+  if (!confirm('Xóa toàn bộ lịch sử local? (Sheets vẫn giữ)')) return;
+  activityLog = [];
+  renderHistory();
+  toast('success', 'Đã xóa lịch sử local');
+}
+
+// ============================================================
+// 13. EXPORT EXCEL
+// ============================================================
+
+function exportExcel() {
+  if (!filteredDecls.length) return toast('warning', 'Không có dữ liệu để export!');
+
+  const header = ['Mã Khai Báo','QLTP Mã','QLTP Tên','Mã ST','Tên ST','Ngày','Từ Giờ','Đến Giờ','Mã SP','Tên SP','Mã NV','Tên NV','Ngày Tạo'];
+  const rows = filteredDecls.map(d => [
+    d.id,
+    d.authorCode, d.authorName,
+    d.sieuthiCode, d.sieuthiName,
+    fDate(d.ngay),
+    fTime(d.tuGio), fTime(d.denGio),
+    (d.sanphamList||[]).map(x=>x.code).join(';'),
+    (d.sanphamList||[]).map(x=>x.name).join(';'),
+    (d.nhanvienList||[]).map(x=>x.code).join(';'),
+    (d.nhanvienList||[]).map(x=>x.name).join(';'),
+    fDate(d.createdAt)
+  ]);
+
+  const ws = XLSX.utils.aoa_to_sheet([header, ...rows]);
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, 'KhaiBao');
+  XLSX.writeFile(wb, `BietKich_${new Date().toISOString().split('T')[0]}.xlsx`);
+  toast('success', `✅ Đã export ${rows.length} dòng`);
+  logActivity('EXPORT', null, `${rows.length} dòng`);
+}
+
+function downloadTemplate() {
+  const rows = [
+    ['Mã ST','Ngày (DD/MM/YYYY)','Từ giờ (HH:MM)','Đến giờ (HH:MM)','Mã SP (cách nhau ;)','Mã NV (cách nhau ;)'],
+    ['BHX001','25/04/2026','08:00','20:00','SP001;SP002','NV001;NV002']
+  ];
+  const ws = XLSX.utils.aoa_to_sheet(rows);
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, 'Template');
+  XLSX.writeFile(wb, 'Template_KhaiBao.xlsx');
+  toast('success', '✅ Đã tải file mẫu');
+}
+
+// ============================================================
+// 14. IMPORT EXCEL
+// ============================================================
+
+function openImportModal() {
+  document.getElementById('fileImport').value  = '';
+  document.getElementById('importPreview').innerHTML = '';
+  document.getElementById('btnDoImport').disabled = true;
+  importRows = [];
+  showModal('modalImport');
+}
+
+function onFileImport(e) {
+  const file = e.target.files[0]; if (!file) return;
+  const reader = new FileReader();
+  reader.onload = evt => {
+    const wb   = XLSX.read(new Uint8Array(evt.target.result), { type: 'array' });
+    const rows = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], { header: 1, defval: '' });
+    parseImport(rows.slice(1).filter(r => r.some(c => c)));
+  };
+  reader.readAsArrayBuffer(file);
+}
+
+function parseImport(rawRows) {
+  importRows = [];
+  let html = '';
+  let okCount = 0, errCount = 0;
+
+  rawRows.forEach((r, i) => {
+    const stCode  = String(r[0] || '').trim();
+    const dateRaw = String(r[1] || '').trim();
+    const tuGio   = String(r[2] || '').trim();
+    const denGio  = String(r[3] || '').trim();
+    const spCodes = String(r[4] || '').split(';').map(x=>x.trim()).filter(Boolean);
+    const nvCodes = String(r[5] || '').split(';').map(x=>x.trim()).filter(Boolean);
+
+    const errs = [];
+
+    // Validate ST
+    const stObj = masterData.sieuthi.find(s => s.code === stCode);
+    if (!stObj) errs.push(`Không tìm thấy mã ST "${stCode}"`);
+    if (stObj && currentUser.role === 'qltp' && stObj.qltpCode !== currentUser.code)
+      errs.push('ST ngoài phạm vi QLTP');
+
+    // Parse date
+    let ngay = '';
+    if (dateRaw.includes('/')) {
+      const parts = dateRaw.split('/');
+      ngay = parts[0].length === 4
+        ? `${parts[0]}-${parts[1].padStart(2,'0')}-${parts[2].padStart(2,'0')}`
+        : `${parts[2]}-${parts[1].padStart(2,'0')}-${parts[0].padStart(2,'0')}`;
+    } else { ngay = dateRaw; }
+    if (!ngay || ngay.length < 8) errs.push('Sai định dạng ngày');
+
+    // Validate time
+    const timeRgx = /^\d{2}:\d{2}$/;
+    if (!timeRgx.test(tuGio) || !timeRgx.test(denGio)) errs.push('Giờ phải định dạng HH:MM');
+    else if (tuGio < '05:00' || denGio > '22:00') errs.push('Giờ ngoài 05:00–22:00');
+    else if (tuGio >= denGio) errs.push('Từ giờ ≥ Đến giờ');
+
+    // Resolve SP
+    const sanphamList = [];
+    spCodes.forEach(code => {
+      const sp = masterData.sanpham.find(x => x.code === code);
+      if (sp) sanphamList.push({ code: sp.code, name: sp.name });
+      else errs.push(`Không tìm thấy mã SP "${code}"`);
+    });
+    if (!sanphamList.length && !errs.some(e=>e.includes('SP'))) errs.push('Thiếu mã SP');
+
+    // Resolve NV
+    const nhanvienList = [];
+    nvCodes.forEach(code => {
+      const nv = masterData.nhanvien.find(x => x.code === code);
+      if (nv) nhanvienList.push({ code: nv.code, name: nv.name });
+      else errs.push(`Không tìm thấy mã NV "${code}"`);
+    });
+    if (!nhanvienList.length && !errs.some(e=>e.includes('NV'))) errs.push('Thiếu mã NV');
+
+    const hasErr = errs.length > 0;
+    hasErr ? errCount++ : okCount++;
+
+    if (!hasErr) {
+      importRows.push({ stCode, stName: stObj.name, ngay, tuGio, denGio, sanphamList, nhanvienList });
+    }
+
+    html += `<div class="preview-row ${hasErr ? 'err' : 'ok'}">
+      <span style="width:28px;color:var(--gray-400);">#${i+2}</span>
+      <span>${hasErr ? '❌' : '✅'} ${stCode} | ${dateRaw} | ${tuGio}–${denGio}</span>
+      ${errs.length ? `<span style="margin-left:auto;color:var(--red);font-size:11px;">${errs.join(', ')}</span>` : ''}
+    </div>`;
+  });
+
+  document.getElementById('importPreview').innerHTML =
+    `<div style="padding:8px 12px;font-weight:700;border-bottom:1px solid var(--border);font-size:12.5px;">
+      Hợp lệ: <span style="color:var(--green);">${okCount}</span> &nbsp;|&nbsp; Lỗi: <span style="color:var(--red);">${errCount}</span>
+    </div>${html}`;
+  document.getElementById('btnDoImport').disabled = okCount === 0;
+}
+
+async function doImport() {
+  if (!importRows.length) return;
+  showLoading(`Đang import ${importRows.length} dòng...`);
+  let done = 0;
+  try {
+    // Gửi batch lên Sheets
+    const newDecls = importRows.map(r => ({
+      id:           genId(),
+      authorCode:   currentUser.code,
+      authorName:   currentUser.name,
+      sieuthiCode:  r.stCode,
+      sieuthiName:  r.stName,
+      ngay:         r.ngay,
+      tuGio:        r.tuGio,
+      denGio:       r.denGio,
+      sanphamList:  JSON.stringify(r.sanphamList),
+      nhanvienList: JSON.stringify(r.nhanvienList),
+      rowStatus:    'active',
+      createdAt:    nowISO(),
+      updatedAt:    nowISO()
+    }));
+
+    const r = await gasPost({ action: 'batchCreateDeclarations', rows: newDecls });
+    if (!r.ok) { hideLoading(); return toast('error', r.msg || 'Lỗi import!'); }
+    done = r.count || newDecls.length;
+
+    // Update local
+    newDecls.forEach(d => {
+      declarations.unshift({ ...d, sanphamList: importRows.find(x=>x.stCode===d.sieuthiCode)?.sanphamList || [], nhanvienList: importRows.find(x=>x.stCode===d.sieuthiCode)?.nhanvienList || [] });
+    });
+
+    await logActivity('IMPORT', null, `${done} dòng`);
+    closeModal('modalImport');
+    applyFilter();
+    toast('success', `✅ Import thành công ${done} khai báo!`);
+  } catch (err) {
+    toast('error', 'Lỗi import: ' + err.message);
+  } finally { hideLoading(); }
+}
+
+// ============================================================
+// 15. MASTER DATA
+// ============================================================
+
+function openMasterModal() {
+  updateMasterChips();
+  loadCfgToForm();
+  switchTab('import');
+  showModal('modalMaster');
+}
+
+function updateMasterChips() {
+  const ql = masterData.qltpList  || [];
+  const st = masterData.sieuthi   || [];
+  const sp = masterData.sanpham   || [];
+  const nv = masterData.nhanvien  || [];
+  setSafe('chipQLTP',  `QLTP: ${ql.length}`);
+  setSafe('chipST',    `Siêu thị: ${st.length}`);
+  setSafe('chipFMCG',  `FMCG: ${sp.filter(x=>x.type==='fmcg').length}`);
+  setSafe('chipFresh', `Fresh: ${sp.filter(x=>x.type==='fresh').length}`);
+  setSafe('chipNV',    `NV: ${nv.length}`);
+  setSafe('cntQLTP',  ql.length);
+  setSafe('cntST',    st.length);
+  setSafe('cntSP',    sp.length);
+  setSafe('cntNV',    nv.length);
+}
+function setSafe(id, val) { const e = document.getElementById(id); if (e) e.textContent = val; }
+
+function switchTab(name) {
+  const tabs = ['import','sheets','users','sieuthi','sanpham','nhanvien','pass'];
+  tabs.forEach(t => {
+    const c = document.getElementById(`tab${t.charAt(0).toUpperCase()+t.slice(1)}`);
+    if (c) c.classList.remove('active');
+  });
+  document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+  const target = document.getElementById(`tab${name.charAt(0).toUpperCase()+name.slice(1)}`);
+  if (target) target.classList.add('active');
+  document.querySelectorAll('.tab-btn').forEach(b => {
+    if (b.getAttribute('onclick')?.includes(`'${name}'`)) b.classList.add('active');
+  });
+  if (!['import','sheets','pass'].includes(name)) renderMasterList(name);
+}
+
+function renderMasterList(type) {
+  const map = { users:'listUsers', sieuthi:'listSieuthi', sanpham:'listSanpham', nhanvien:'listNhanvien' };
+  const searchMap = { users:'searchUsers', sieuthi:'searchST', sanpham:'searchSP', nhanvien:'searchNV' };
+  const el = document.getElementById(map[type]);
+  if (!el) return;
+  const q = (document.getElementById(searchMap[type])?.value || '').trim().toUpperCase();
+
+  let items = type === 'users' ? masterData.qltpList : masterData[type === 'sieuthi' ? 'sieuthi' : type === 'sanpham' ? 'sanpham' : 'nhanvien'];
+  // Filter by code only
+  const filtered = q ? items.filter(x => String(x.code).toUpperCase().includes(q)) : items;
+  const shown = filtered.slice(0, 150);
+
+  const rows = shown.map(x => `<tr>
+    <td style="padding:6px;font-weight:700;color:var(--green);">${x.code}</td>
+    <td style="padding:6px;">${x.name}</td>
+    <td style="padding:6px;font-size:11px;color:var(--gray-600);">
+      ${type==='sieuthi' ? (x.qltpCode||'--') : type==='nhanvien' ? (x.sieuthiCode||'--') : (x.type||'')}
+    </td>
+    <td style="padding:6px;">
+      <button class="btn btn-sm btn-red" onclick="deleteMasterItem('${type}','${x.code}')">Xóa</button>
+    </td>
+  </tr>`).join('');
+
+  el.innerHTML = `<table style="width:100%;border-collapse:collapse;font-size:12px;">
+    <thead><tr style="background:var(--gray-100);">
+      <th style="padding:6px;text-align:left;">Mã</th>
+      <th style="padding:6px;text-align:left;">Tên</th>
+      <th style="padding:6px;text-align:left;">${type==='sieuthi'?'QLTP':type==='nhanvien'?'Mã ST':'Loại'}</th>
+      <th></th>
+    </tr></thead>
+    <tbody>${rows}</tbody>
+  </table>
+  ${filtered.length > 150 ? `<p style="font-size:11px;color:var(--orange);padding:6px;">... và ${filtered.length-150} kết quả khác</p>` : ''}`;
+}
+
+function deleteMasterItem(type, code) {
+  if (!confirm('Xóa mục này khỏi master data local?')) return;
+  const key = type === 'users' ? 'qltpList' : type;
+  masterData[key] = (masterData[key] || []).filter(x => x.code !== code);
+  updateMasterChips();
+  renderMasterList(type);
+}
+
+function addUser() {
+  const code = document.getElementById('newUserCode').value.trim();
+  const name = document.getElementById('newUserName').value.trim();
+  if (!code || !name) return toast('error', 'Nhập đủ Mã và Tên!');
+  if (masterData.qltpList.find(x => x.code === code)) return toast('error', 'Mã đã tồn tại!');
+  masterData.qltpList.push({ code, name });
+  updateMasterChips();
+  renderMasterList('users');
+  document.getElementById('newUserCode').value = '';
+  document.getElementById('newUserName').value = '';
+  toast('success', 'Đã thêm QLTP');
+}
+
+// ============================================================
+// 16. IMPORT MASTER DATA TỪ FILE
+// ============================================================
+
+function importMaster(type, input) {
   const file = input.files[0]; if (!file) return;
-  const keyMap = { phanbo: 'PhanBo', fmcg: 'FMCG', fresh: 'Fresh', nhanvien: 'NV' }; // Thêm fresh
-  const statusEl = document.getElementById('status' + (keyMap[type] || ''));
+  const statusEl = document.getElementById({phanbo:'stPhanBoStatus',fmcg:'stFMCGStatus',fresh:'stFreshStatus',nhanvien:'stNVStatus'}[type]);
   if (statusEl) statusEl.textContent = '⏳ Đang đọc...';
   const reader = new FileReader();
   reader.onload = e => {
     try {
-      const wb = XLSX.read(new Uint8Array(e.target.result), { type: 'array' });
+      const wb   = XLSX.read(new Uint8Array(e.target.result), { type: 'array' });
       const rows = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], { header: 1, defval: '' });
-      if (type === 'phanbo') parsePhanBo(rows);
-      else if (type === 'fmcg') parseSanPham(rows, 'fmcg');
-      else if (type === 'fresh') parseSanPham(rows, 'fresh'); // Dòng MỚI
-      else if (type === 'nhanvien') parseNhanVien(rows);
-      updateStatChips();
+      if (type === 'phanbo')    parseMasterPhanBo(rows);
+      else if (type === 'fmcg')    parseMasterSP(rows, 'fmcg');
+      else if (type === 'fresh')   parseMasterSP(rows, 'fresh');
+      else if (type === 'nhanvien')parseMasterNV(rows);
+      updateMasterChips();
       if (statusEl) statusEl.textContent = '✅ OK!';
       input.value = '';
     } catch (err) {
@@ -496,1187 +1079,373 @@ function importMasterFile(type, input) {
   reader.readAsArrayBuffer(file);
 }
 
-function parsePhanBo(rows) {
-  let headerIdx = 0;
+function parseMasterPhanBo(rows) {
+  let hIdx = 0;
   for (let i = 0; i < Math.min(5, rows.length); i++) {
-    if (rows[i].some(c => String(c).toUpperCase().includes('MST') || String(c).includes('Tên ST'))) { headerIdx = i; break; }
+    if (rows[i].some(c => String(c).toUpperCase().includes('MST'))) { hIdx = i; break; }
   }
-  const headers = rows[headerIdx].map(h => String(h).trim());
-  const idxMST = headers.findIndex(h => h.toUpperCase() === 'MST' || h.includes('MST'));
-  const idxTen = headers.findIndex(h => h.includes('Tên ST') || h.includes('TEN ST'));
-  const idxQLTP = headers.findIndex(h => h.includes('tên rút gọn') || h.includes('rút gọn') || (h.includes('QLTP') && h.includes('4')));
-  let sieuthi = [], qltpMap = {};
-  for (let i = headerIdx + 1; i < rows.length; i++) {
+  const headers = rows[hIdx].map(h => String(h).trim());
+  const iMST  = headers.findIndex(h => h.toUpperCase() === 'MST' || h.includes('MST'));
+  const iTen  = headers.findIndex(h => h.includes('Tên ST') || h.includes('TEN ST'));
+  const iQLTP = headers.findIndex(h => h.includes('rút gọn') || (h.includes('QLTP') && h.includes('4')));
+
+  const sieuthi = []; const qltpMap = {};
+  for (let i = hIdx + 1; i < rows.length; i++) {
     const r = rows[i];
-    const mst = String(r[idxMST] || '').trim();
-    const tenST = String(r[idxTen] || '').trim();
-    const qltpRaw = String(r[idxQLTP] || '').trim();
-    if (!mst || !tenST) continue;
-    let qltpCode = '', qltpName = '';
-    const di = qltpRaw.indexOf(' - ');
-    if (di > 0) { qltpCode = qltpRaw.substring(0, di).trim(); qltpName = qltpRaw.substring(di + 3).trim(); }
-    else { qltpCode = qltpRaw; }
-    sieuthi.push({ id: mst, code: mst, name: tenST, qltpCode, qltpName });
-    if (qltpCode && !qltpMap[qltpCode]) qltpMap[qltpCode] = { code: qltpCode, name: qltpName };
+    const mst = String(r[iMST]||'').trim();
+    const ten = String(r[iTen]||'').trim();
+    const raw = String(r[iQLTP]||'').trim();
+    if (!mst || !ten) continue;
+    let qCode = '', qName = '';
+    const di = raw.indexOf(' - ');
+    if (di > 0) { qCode = raw.slice(0, di).trim(); qName = raw.slice(di+3).trim(); }
+    else qCode = raw;
+    sieuthi.push({ code: mst, id: mst, name: ten, qltpCode: qCode, qltpName: qName });
+    if (qCode && !qltpMap[qCode]) qltpMap[qCode] = { code: qCode, name: qName };
   }
-  DB.set('sieuthi', sieuthi);
-  DB.set('qltpList', Object.values(qltpMap));
-  toast('success', `✅ Import ${sieuthi.length} siêu thị, ${Object.keys(qltpMap).length} QLTP`);
-  logAction('IMPORT PHÂN BỔ', `${sieuthi.length} ST`);
+  masterData.sieuthi  = sieuthi;
+  masterData.qltpList = Object.values(qltpMap);
+  toast('success', `✅ Import ${sieuthi.length} ST, ${Object.keys(qltpMap).length} QLTP`);
 }
 
-function parseSanPham(rows, type) {
-  let headerIdx = 0;
+function parseMasterSP(rows, type) {
+  let hIdx = 0;
   for (let i = 0; i < Math.min(5, rows.length); i++) {
-    if (rows[i].some(c => String(c).toLowerCase().includes('mã') || String(c).toLowerCase().includes('ma'))) { headerIdx = i; break; }
+    if (rows[i].some(c => /mã|ma/i.test(String(c)))) { hIdx = i; break; }
   }
-  const headers = rows[headerIdx].map(h => String(h).trim().toLowerCase());
-  const idxMa = headers.findIndex(h => h.includes('mã') || h.includes('ma'));
-  const idxTen = headers.findIndex(h => (h.includes('tên') || h.includes('ten')) && !h.includes('tắt'));
-  let existing = (DB.get('sanpham') || []).filter(s => s.type !== type);
-  let newItems = [], seen = new Set(existing.map(s => s.code));
-  for (let i = headerIdx + 1; i < rows.length; i++) {
+  const headers = rows[hIdx].map(h => String(h).trim().toLowerCase());
+  const iMa  = headers.findIndex(h => /mã|ma/.test(h));
+  const iTen = headers.findIndex(h => /tên|ten/.test(h) && !/tắt/.test(h));
+  const existing = masterData.sanpham.filter(s => s.type !== type);
+  const seen = new Set(existing.map(s => s.code));
+  const added = [];
+  for (let i = hIdx + 1; i < rows.length; i++) {
     const r = rows[i];
-    const ma = String(r[idxMa] || '').trim();
-    const ten = String(r[idxTen] || '').trim();
+    const ma  = String(r[iMa] ||'').trim();
+    const ten = String(r[iTen]||'').trim();
     if (!ma || !ten || seen.has(ma)) continue;
-    seen.add(ma);
-    newItems.push({ id: ma, code: ma, name: ten, type });
+    seen.add(ma); added.push({ code: ma, id: ma, name: ten, type });
   }
-  DB.set('sanpham', [...existing, ...newItems]);
-  toast('success', `✅ Import ${newItems.length} sản phẩm`);
+  masterData.sanpham = [...existing, ...added];
+  toast('success', `✅ Import ${added.length} SP ${type.toUpperCase()}`);
 }
 
-function parseNhanVien(rows) {
-  let headerIdx = 3;
+function parseMasterNV(rows) {
+  let hIdx = 3;
   for (let i = 0; i < Math.min(6, rows.length); i++) {
-    if (rows[i].some(c => String(c).toLowerCase().includes('mã nhân viên') || String(c).toLowerCase().includes('ma nhan vien'))) { headerIdx = i; break; }
+    if (rows[i].some(c => /mã nhân viên/i.test(String(c)))) { hIdx = i; break; }
   }
-  const headers = rows[headerIdx].map(h => String(h).trim().toLowerCase());
-  const idxMa = headers.findIndex(h => h.includes('mã nhân viên') || h.includes('ma nhan vien'));
-  const idxTen = headers.findIndex(h => h.includes('tên nhân viên') || h.includes('ten nhan vien'));
-  const idxST = headers.findIndex(h => h.includes('mã siêu thị') || h.includes('ma sieu thi'));
-  let items = [], seen = new Set();
-  for (let i = headerIdx + 1; i < rows.length; i++) {
+  const headers = rows[hIdx].map(h => String(h).trim().toLowerCase());
+  const iMa = headers.findIndex(h => /mã nhân viên/.test(h));
+  const iTen= headers.findIndex(h => /tên nhân viên/.test(h));
+  const iST = headers.findIndex(h => /mã siêu thị/.test(h));
+  const seen = new Set(); const items = [];
+  for (let i = hIdx + 1; i < rows.length; i++) {
     const r = rows[i];
-    const ma = String(r[idxMa] || '').trim();
-    const ten = String(r[idxTen] || '').trim();
-    const st = idxST >= 0 ? String(r[idxST] || '').trim() : '';
-    if (!ma || !ten || seen.has(ma)) continue;
-    seen.add(ma);
-    items.push({ id: ma, code: ma, name: ten, sieuthiCode: st });
+    const ma  = String(r[iMa]||'').trim();
+    const ten = String(r[iTen]||'').trim();
+    const st  = iST>=0 ? String(r[iST]||'').trim() : '';
+    if (!ma||!ten||seen.has(ma)) continue;
+    seen.add(ma); items.push({ code: ma, id: ma, name: ten, sieuthiCode: st });
   }
-  DB.set('nhanvien', items);
+  masterData.nhanvien = items;
   toast('success', `✅ Import ${items.length} nhân viên`);
 }
 
-function dlMasterTpl(type) {
-  let d, name;
-  if (type === 'phanbo') {
-    d = [['MST','Tên ST','QLTP tháng 4.2026 (tên rút gọn)','Cụm miền'],['12345','BHX_HCM_001','27506 - Bá Thành','HCM']];
-    name = 'Template_PhanBo.xlsx';
-  }
-  else if (type === 'fresh') {
-    d = [['Mã sản phẩm','Tên sản phẩm'],['8100567','THỊT HEO ĐÙI']];
-    name = 'Template_Fresh.xlsx';
-  } else if (type === 'fmcg') {
-    d = [['Mã sản phẩm','Tên sản phẩm'],['1053090000397','BÁNH DD AFC VỊ LÚA MÌ']];
-    name = 'Template_FMCG.xlsx';
-  } else if (type === 'nhanvien') {
-    d = [[],[],[],['Mã Nhân Viên','Tên Nhân Viên','Mã Siêu Thị'],['268789','Nguyễn Hải Phú','12345']];
-    name = 'Template_NhanVien.xlsx';
-  }
-  const ws = XLSX.utils.aoa_to_sheet(d);
-  const wb = XLSX.utils.book_new();
-  XLSX.utils.book_append_sheet(wb, ws, 'Template');
-  XLSX.writeFile(wb, name, { bookType: 'xlsx', type: 'binary' });
-  toast('success', '✅ Đã tải ' + name);
+// ============================================================
+// 17. PUSH MASTER DATA LÊN SHEETS
+// ============================================================
+
+async function pushMasterToSheets() {
+  if (!WEB_APP_URL) return toast('error', 'Chưa cấu hình Web App URL!');
+  showLoading('Đang đẩy Master Data lên Sheets...');
+  try {
+    const r = await gasPost({
+      action: 'syncMasterData',
+      qltpList:  masterData.qltpList,
+      sieuthi:   masterData.sieuthi,
+      sanpham:   masterData.sanpham,
+      nhanvien:  masterData.nhanvien
+    });
+    if (!r.ok) { hideLoading(); return toast('error', r.msg || 'Lỗi đẩy dữ liệu!'); }
+    toast('success', '✅ Đã đẩy Master Data lên Google Sheets!');
+  } catch (err) {
+    toast('error', 'Lỗi: ' + err.message);
+  } finally { hideLoading(); }
 }
 
 // ============================================================
-// [2] LOGIN — chỉ còn Admin + QLTP
+// 18. GOOGLE SHEETS CONFIG
 // ============================================================
-function toggleLoginFields() {
-  const r = document.getElementById('loginRole').value;
-  document.getElementById('grpQLTP').style.display = r === 'qltp' ? 'block' : 'none';
-  document.getElementById('grpAdmin').style.display = r === 'admin' ? 'block' : 'none';
-  const hints = {
-    qltp: '📌 Nhập mã QLTP của bạn (VD: 27506). Hệ thống sẽ tự xác nhận và lọc dữ liệu theo phạm vi của bạn.',
-    admin: '🔐 Chỉ dành cho Admin BHX. Có quyền hạn toàn bộ hệ thống.'
-  };
-  const hint = document.getElementById('loginHint');
-  if (r && hints[r]) { hint.style.display = 'block'; hint.textContent = hints[r]; }
-  else hint.style.display = 'none';
+
+function loadCfgToForm() {
+  document.getElementById('cfgWebUrl').value = WEB_APP_URL;
 }
 
-function suggestQLTP(val) {
-  const suggest = document.getElementById('qltpSuggest');
-  const qltps = DB.get('qltpList') || [];
-  const q = String(val).trim().toLowerCase();
-  if (!q) { suggest.classList.add('hidden'); document.getElementById('qltpConfirm').style.display = 'none'; return; }
-  const filtered = qltps.filter(x => String(x.code).toLowerCase().includes(q) || String(x.name).toLowerCase().includes(q)).slice(0, 10);
-  if (!filtered.length) { suggest.classList.add('hidden'); document.getElementById('qltpConfirm').style.display = 'none'; return; }
-  // [4] Format "Mã - Tên" trong gợi ý
-  suggest.innerHTML = filtered.map(x =>
-    `<div class="login-suggest-item" onclick="selectQLTPLogin('${x.code}','${x.name.replace(/'/g, "\\'")}')">
-      <span class="mst">${x.code}</span>
-      <span class="name">${x.name}</span>
-    </div>`
-  ).join('');
-  suggest.classList.remove('hidden');
+function saveWebUrl() {
+  const url = document.getElementById('cfgWebUrl').value.trim();
+  if (!url) return toast('error', 'Nhập URL!');
+  WEB_APP_URL = url;
+  localStorage.setItem('bhx_webAppUrl', url);
+  toast('success', '✅ Đã lưu URL!');
 }
 
-function selectQLTPLogin(code, name) {
-  document.getElementById('loginCodeQLTP').value = code;
-  document.getElementById('qltpSuggest').classList.add('hidden');
-  document.getElementById('qltpConfirm').style.display = 'block';
-  // [4] Format Mã - Tên
-  document.getElementById('qltpConfirmText').textContent = fCodeName(code, name);
-  handleLogin();
-}
-
-function handleLogin() {
-  const r = document.getElementById('loginRole').value;
-  if (!r) return toast('error', 'Chọn phân hệ!');
-
-  if (r === 'admin') {
-    const p = document.getElementById('loginPassAdmin').value;
-    if (p !== DB.get('adminPass')) return toast('error', 'Sai mật khẩu Admin!');
-    currentUser = { code: 'admin', name: 'Admin BHX', role: 'admin' };
-    currentRole = 'admin';
-  } else if (r === 'qltp') {
-    const code = document.getElementById('loginCodeQLTP').value.trim();
-    if (!code) return toast('error', 'Nhập mã QLTP!');
-    const qltps = DB.get('qltpList') || [];
-    const found = qltps.find(x => String(x.code) === code);
-    if (!found) return toast('error', `Mã QLTP [${code}] không tồn tại trong hệ thống.`);
-    currentUser = { code: found.code, name: found.name, role: 'qltp' };
-    currentRole = 'qltp';
-  }
-
-  finishLogin();
-}
-
-function finishLogin() {
-  document.getElementById('loginOverlay').style.display = 'none';
-  document.getElementById('appContainer').classList.remove('blurred');
-  // [4] Format Mã - Tên ở header
-  const roleLabel = { admin: 'ADMIN', qltp: 'QLTP' }[currentRole];
-  document.getElementById('headerUserName').textContent = `${currentUser.name} (${currentUser.code} — ${roleLabel})`;
-  updateRoleUI();
-
-  const today = new Date().toISOString().split('T')[0];
-  document.getElementById('filterTuNgay').value = today;
-  document.getElementById('filterDenNgay').value = today;
-  logAction('ĐĂNG NHẬP', roleLabel);
-
-  // Auto sync khi login nếu đã cấu hình Sheets
-  if (SHEETS.ready) {
-    syncFromSheets();
-  } else {
-    SHEETS.setStatus('error', 'Chưa cấu hình');
-    loadTable();
+async function testConnection() {
+  saveWebUrl();
+  const el = document.getElementById('connTestResult');
+  el.innerHTML = '⏳ Đang kiểm tra...';
+  try {
+    const r = await gasGet({ action: 'ping' });
+    el.innerHTML = r.ok
+      ? `<span style="color:var(--green);">✅ Kết nối thành công! Server: ${r.msg||'OK'}</span>`
+      : `<span style="color:var(--red);">❌ ${r.msg}</span>`;
+  } catch (err) {
+    el.innerHTML = `<span style="color:var(--red);">❌ Lỗi: ${err.message}</span>`;
   }
 }
 
-function logout() {
-  currentUser = null; currentRole = null;
-  document.getElementById('appContainer').classList.add('blurred');
-  document.getElementById('loginOverlay').style.display = 'flex';
-  document.getElementById('loginRole').value = '';
-  document.getElementById('grpQLTP').style.display = 'none';
-  document.getElementById('grpAdmin').style.display = 'none';
-  document.getElementById('loginHint').style.display = 'none';
-  document.getElementById('qltpConfirm').style.display = 'none';
-  document.getElementById('loginCodeQLTP').value = '';
-}
+// ============================================================
+// 19. ĐỔI MẬT KHẨU ADMIN
+// ============================================================
 
-// [2] updateRoleUI: chỉ còn 2 role, bỏ ngành hàng
-function updateRoleUI() {
-  const isAd = currentRole === 'admin';
-  const isQL = currentRole === 'qltp';
-  document.getElementById('adminButtons').style.display = isAd ? 'flex' : 'none';
-  document.getElementById('btnTaoMoi').style.display = (isQL || isAd) ? 'inline-flex' : 'none';
-  document.getElementById('btnImportKhaiBao').style.display = (isQL || isAd) ? 'inline-flex' : 'none';
-  // Status bar
-  document.getElementById('roleStatusText').innerHTML =
-    `Phân hệ: ${currentRole === 'admin' ? 'ADMIN' : 'QLTP'} | ${currentUser.name} (${currentUser.code})`;
-}
-
-function openChangePassModal() {
-  if (currentRole !== 'admin') return;
+function changePass() {
+  const old = document.getElementById('cpOld').value;
+  const nw  = document.getElementById('cpNew').value;
+  if (old !== getAdminPass()) return toast('error', 'Sai mật khẩu cũ!');
+  if (!nw || nw.length < 4)   return toast('error', 'Mật khẩu mới tối thiểu 4 ký tự!');
+  setAdminPass(nw);
   document.getElementById('cpOld').value = '';
   document.getElementById('cpNew').value = '';
-  showModal('changePassModal');
-}
-function submitChangePass() {
-  const o = document.getElementById('cpOld').value;
-  const n = document.getElementById('cpNew').value;
-  if (o !== DB.get('adminPass')) return toast('error', 'Sai mật khẩu cũ!');
-  if (!n || n.length < 4) return toast('error', 'Mật khẩu mới quá ngắn!');
-  DB.set('adminPass', n);
-  toast('success', 'Đổi mật khẩu thành công!');
-  closeModal('changePassModal');
+  toast('success', '✅ Đổi mật khẩu thành công!');
 }
 
 // ============================================================
-// TABLE LOAD & RENDER
+// 20. COPY APPS SCRIPT CODE
 // ============================================================
-function loadTable() {
-  let all = DB.get('declarations') || [];
-  // QLTP chỉ xem đơn của mình
-  if (currentRole === 'qltp') all = all.filter(d => d.authorCode === currentUser.code);
-  // Admin xem tất cả
 
-  const fST = document.getElementById('filterSieuthi').value.toLowerCase().trim();
-  const fFr = document.getElementById('filterTuNgay').value;
-  const fTo = document.getElementById('filterDenNgay').value;
-  const fSt = document.getElementById('filterStatus').value;
+function copyGASCode() {
+  const code = `// ============================================================
+// BHX BIỆT KÍCH — Google Apps Script
+// Deploy: Extensions → Apps Script → Deploy → New Deployment
+//   Execute as: Me | Who has access: Anyone
+// ============================================================
 
-  filteredDeclarations = all.filter(d => {
-    // --- ĐOẠN CODE SỬA LỖI ---
-    // Sử dụng hàm fCodeName để tạo chuỗi "Mã - Tên", đồng nhất với lúc hiển thị dropdown
-    const chuoiHienThi = fCodeName(d.sieuthiCode, d.sieuthiName).toLowerCase();
-    
-    if (fST && !chuoiHienThi.includes(fST)) return false;
-    // -------------------------
-    
-    if (fFr && d.ngay < fFr) return false;
-    if (fTo && d.ngay > fTo) return false;
-    if (fSt && d.status !== fSt) return false;
-    return true;
+const SS = SpreadsheetApp.getActiveSpreadsheet();
+
+// Tên các sheet tab
+const SHEET = {
+  QLTP:         'qltp_list',
+  SIEUTHI:      'sieuthi',
+  SANPHAM:      'sanpham',
+  NHANVIEN:     'nhanvien',
+  DECLARATIONS: 'declarations',
+  ACTIVITY_LOG: 'activity_log'
+};
+
+// Headers cho từng sheet
+const HEADERS = {
+  [SHEET.QLTP]:         ['code','name'],
+  [SHEET.SIEUTHI]:      ['code','name','qltpCode','qltpName'],
+  [SHEET.SANPHAM]:      ['code','name','type'],
+  [SHEET.NHANVIEN]:     ['code','name','sieuthiCode'],
+  [SHEET.DECLARATIONS]: ['id','authorCode','authorName','sieuthiCode','sieuthiName',
+                         'ngay','tuGio','denGio','sanphamList','nhanvienList',
+                         'rowStatus','createdAt','updatedAt','deletedBy','deletedAt'],
+  [SHEET.ACTIVITY_LOG]: ['time','userCode','userName','action','declId','detail']
+};
+
+// ── Helpers ──
+function getSheet(name) {
+  let sh = SS.getSheetByName(name);
+  if (!sh) {
+    sh = SS.insertSheet(name);
+    sh.appendRow(HEADERS[name]);
+  }
+  return sh;
+}
+
+function sheetToObjects(sheetName) {
+  const sh = getSheet(sheetName);
+  const data = sh.getDataRange().getValues();
+  if (data.length < 2) return [];
+  const headers = data[0].map(h => String(h).trim());
+  return data.slice(1).map(row => {
+    const obj = {};
+    headers.forEach((h, i) => { obj[h] = row[i] !== undefined ? String(row[i]).trim() : ''; });
+    return obj;
+  }).filter(obj => obj[headers[0]]); // bỏ dòng trống
+}
+
+function ok(data, msg) {
+  return ContentService.createTextOutput(JSON.stringify({ ok: true, data, msg: msg||'OK' }))
+    .setMimeType(ContentService.MimeType.JSON);
+}
+function err(msg) {
+  return ContentService.createTextOutput(JSON.stringify({ ok: false, msg }))
+    .setMimeType(ContentService.MimeType.JSON);
+}
+function safeJson(str, fb) {
+  try { return JSON.parse(str) || fb; } catch { return fb; }
+}
+
+// ── GET ──
+function doGet(e) {
+  const action = e.parameter.action;
+  try {
+    if (action === 'ping') return ok(null, 'BHX Biệt Kích API — OK');
+
+    if (action === 'getQltpList') {
+      return ok(sheetToObjects(SHEET.QLTP));
+    }
+
+    if (action === 'loginQLTP') {
+      const code = e.parameter.code;
+      const list = sheetToObjects(SHEET.QLTP);
+      const found = list.find(x => x.code === code);
+      if (!found) return err('Mã QLTP không tồn tại!');
+      return ok(found);
+    }
+
+    if (action === 'getAllData') {
+      const role = e.parameter.role;
+      const code = e.parameter.code;
+
+      const qltpList   = sheetToObjects(SHEET.QLTP);
+      const sieuthi    = sheetToObjects(SHEET.SIEUTHI);
+      const sanpham    = sheetToObjects(SHEET.SANPHAM);
+      const nhanvien   = sheetToObjects(SHEET.NHANVIEN);
+      let   declRaw    = sheetToObjects(SHEET.DECLARATIONS);
+      const actLog     = sheetToObjects(SHEET.ACTIVITY_LOG).reverse().slice(0, 500);
+
+      // Parse JSON fields trong declarations
+      const declarations = declRaw.map(d => ({
+        ...d,
+        sanphamList:  safeJson(d.sanphamList,  []),
+        nhanvienList: safeJson(d.nhanvienList, [])
+      }));
+
+      // Admin thấy tất cả; QLTP chỉ thấy của mình
+      const filteredDecl = role === 'admin'
+        ? declarations
+        : declarations.filter(d => d.authorCode === code);
+
+      return ok({ qltpList, sieuthi, sanpham, nhanvien, declarations: filteredDecl, activityLog: actLog });
+    }
+
+    return err('Unknown GET action: ' + action);
+  } catch(e) {
+    return err('Server error: ' + e.toString());
+  }
+}
+
+// ── POST ──
+function doPost(e) {
+  try {
+    const payload = JSON.parse(e.postData.contents);
+    const action  = payload.action;
+
+    if (action === 'createDeclaration')  return createDeclaration(payload.row);
+    if (action === 'updateDeclaration')  return updateDeclaration(payload.row);
+    if (action === 'softDeleteDeclaration') return softDelete(payload.id, payload.deletedBy, payload.deletedAt);
+    if (action === 'batchCreateDeclarations') return batchCreate(payload.rows);
+    if (action === 'appendLog')          return appendLog(payload.row);
+    if (action === 'syncMasterData')     return syncMaster(payload);
+
+    return err('Unknown POST action: ' + action);
+  } catch(e) {
+    return err('Server error: ' + e.toString());
+  }
+}
+
+function createDeclaration(row) {
+  const sh = getSheet(SHEET.DECLARATIONS);
+  if (sh.getLastRow() <= 1) {
+    // Đảm bảo header đúng
+  }
+  sh.appendRow(HEADERS[SHEET.DECLARATIONS].map(h => row[h] || ''));
+  return ok(null, 'created');
+}
+
+function updateDeclaration(row) {
+  const sh   = getSheet(SHEET.DECLARATIONS);
+  const data = sh.getDataRange().getValues();
+  const headers = data[0].map(String);
+  const idCol   = headers.indexOf('id');
+  for (let i = 1; i < data.length; i++) {
+    if (String(data[i][idCol]) === String(row.id)) {
+      HEADERS[SHEET.DECLARATIONS].forEach((h, j) => {
+        if (row[h] !== undefined) sh.getRange(i+1, j+1).setValue(row[h]);
+      });
+      return ok(null, 'updated');
+    }
+  }
+  return err('ID not found: ' + row.id);
+}
+
+function softDelete(id, deletedBy, deletedAt) {
+  const sh   = getSheet(SHEET.DECLARATIONS);
+  const data = sh.getDataRange().getValues();
+  const headers  = data[0].map(String);
+  const idCol    = headers.indexOf('id');
+  const stCol    = headers.indexOf('rowStatus');
+  const delByCol = headers.indexOf('deletedBy');
+  const delAtCol = headers.indexOf('deletedAt');
+  for (let i = 1; i < data.length; i++) {
+    if (String(data[i][idCol]) === String(id)) {
+      if (stCol    >= 0) sh.getRange(i+1, stCol+1).setValue('deleted');
+      if (delByCol >= 0) sh.getRange(i+1, delByCol+1).setValue(deletedBy||'');
+      if (delAtCol >= 0) sh.getRange(i+1, delAtCol+1).setValue(deletedAt||'');
+      return ok(null, 'soft-deleted');
+    }
+  }
+  return err('ID not found: ' + id);
+}
+
+function batchCreate(rows) {
+  const sh = getSheet(SHEET.DECLARATIONS);
+  rows.forEach(row => {
+    sh.appendRow(HEADERS[SHEET.DECLARATIONS].map(h => row[h] || ''));
   });
-
-  document.getElementById('totalCount').textContent = `Tổng: ${filteredDeclarations.length} bản ghi`;
-  renderTable();
+  return ok({ count: rows.length }, 'batch created');
 }
 
-function renderTable() {
-  const tbody = document.getElementById('tableBody');
-  if (!filteredDeclarations.length) {
-    tbody.innerHTML = `<tr><td colspan="10"><div class="empty-state"><div class="icon">📋</div>Không có dữ liệu phù hợp</div></td></tr>`;
-    return;
+function appendLog(row) {
+  const sh = getSheet(SHEET.ACTIVITY_LOG);
+  sh.appendRow(HEADERS[SHEET.ACTIVITY_LOG].map(h => row[h] || ''));
+  return ok(null, 'logged');
+}
+
+function syncMaster(payload) {
+  // Ghi đè toàn bộ từng sheet master
+  _overwriteSheet(SHEET.QLTP,    payload.qltpList  || [], HEADERS[SHEET.QLTP]);
+  _overwriteSheet(SHEET.SIEUTHI, payload.sieuthi   || [], HEADERS[SHEET.SIEUTHI]);
+  _overwriteSheet(SHEET.SANPHAM, payload.sanpham   || [], HEADERS[SHEET.SANPHAM]);
+  _overwriteSheet(SHEET.NHANVIEN,payload.nhanvien  || [], HEADERS[SHEET.NHANVIEN]);
+  return ok(null, 'master synced');
+}
+
+function _overwriteSheet(sheetName, items, headers) {
+  const sh = getSheet(sheetName);
+  // Xóa tất cả dữ liệu cũ (trừ header)
+  const lastRow = sh.getLastRow();
+  if (lastRow > 1) sh.getRange(2, 1, lastRow-1, headers.length).clearContent();
+  // Ghi dữ liệu mới
+  if (items.length) {
+    const rows = items.map(item => headers.map(h => item[h] || ''));
+    sh.getRange(2, 1, rows.length, headers.length).setValues(rows);
   }
-
-  tbody.innerHTML = filteredDeclarations.map((d, i) => {
-    const checked = selectedIds.has(d.id) ? 'checked' : '';
-
-    // [4] Siêu thị: Mã - Tên
-    const stTag = d.isManualSieuthi
-      ? `<span class="manual-tag">⚠ ${d.sieuthiName}</span>`
-      : `<b style="color:var(--green)">${fCodeName(d.sieuthiCode, d.sieuthiName)}</b>`;
-
-    // [5] Multi-product list
-    const spList = (d.sanphamList || []);
-    const spTags = spList.map(sp =>
-      sp.isManual
-        ? `<span class="manual-tag">⚠ ${sp.name}</span>`
-        // [4] Format Mã - Tên
-        : `<div style="font-size:11px;"><b style="color:var(--green)">${fCodeName(sp.code, sp.name)}</b></div>`
-    ).join('');
-
-    const nvTags = (d.nhanvienList || []).map(n =>
-      n.isManual
-        ? `<span class="manual-tag">⚠ ${n.name}</span>`
-        // [4] Format Mã - Tên
-        : fCodeName(n.code, n.name)
-    ).join(', ');
-
-    const stat = {
-      pending: '<span class="badge badge-pending">Chờ duyệt</span>',
-      approved: '<span class="badge badge-approved">Đã duyệt</span>',
-      rejected: '<span class="badge badge-rejected">Từ chối</span>'
-    }[d.status] || '';
-
-    // [2] Chỉ admin mới duyệt/từ chối; QLTP chỉ sửa/xóa đơn của mình
-    let acts = `<button class="btn btn-sm btn-secondary" onclick="openDetail('${d.id}')">👁</button> `;
-    if ((currentRole === 'qltp' || currentRole === 'admin') && (d.status === 'rejected' || d.status === 'draft')) {
-      acts += `<button class="btn btn-sm btn-primary" onclick="openEditModal('${d.id}')">✏</button> `;
-    }
-    if (currentRole === 'admin' && d.status === 'pending') {
-      acts += `<button class="btn btn-sm btn-success" onclick="approveOne('${d.id}')">✅</button> `;
-      acts += `<button class="btn btn-sm btn-danger" onclick="openRejectModal('${d.id}')">❌</button> `;
-    }
-    if (currentRole === 'admin' || (currentRole === 'qltp' && d.authorCode === currentUser.code)) {
-      acts += `<button class="btn btn-sm btn-danger" onclick="deleteRecord('${d.id}')">🗑</button>`;
-    }
-
-    return `<tr>
-      <td style="text-align:center;"><input type="checkbox" ${checked} onchange="toggleSelect('${d.id}')"></td>
-      <td style="color:#999;font-size:11px;">${i + 1}</td>
-      <td style="font-weight:600;color:var(--green);font-size:12px;">${d.authorCode}<br><span style="font-weight:400;color:#555;">${d.authorName}</span></td>
-      <td style="font-size:12px;">${stTag}</td>
-      <td style="font-weight:bold;color:var(--blue);white-space:nowrap;">${fDate(d.ngay)}</td>
-      <!-- [3] Hiển thị giờ 24h -->
-      <td style="font-size:12px;white-space:nowrap;">${fTime(d.tuGio)} - ${fTime(d.denGio)}</td>
-      <!-- [5] DS sản phẩm -->
-      <td style="font-size:11px;max-width:200px;">${spTags || '--'}</td>
-      <td style="font-size:11px;max-width:160px;">${nvTags}</td>
-      <td>${stat}</td>
-      <td style="white-space:nowrap;">${acts}</td>
-    </tr>`;
-  }).join('');
 }
+`;
 
-// Approve 1 đơn (Admin)
-async function approveOne(id) {
-  let decls = DB.get('declarations') || [];
-  const idx = decls.findIndex(x => x.id === id);
-  if (idx < 0) return;
-  decls[idx].status = 'approved';
-  decls[idx].updatedAt = new Date().toISOString();
-  DB.set('declarations', decls);
-  logAction('DUYỆT', id);
-  await updateDeclStatusInSheets(id, 'approved', '');
-  toast('success', 'Đã duyệt!');
-  loadTable();
-}
-
-function toggleSelectAll() {
-  const isC = document.getElementById('selectAll').checked;
-  document.querySelectorAll('#tableBody input[type=checkbox]').forEach(cb => {
-    cb.checked = isC;
-    const id = cb.getAttribute('onchange').match(/'([^']+)'/)[1];
-    isC ? selectedIds.add(id) : selectedIds.delete(id);
-  });
-  updateSelectedCount();
-}
-function toggleSelect(id) { selectedIds.has(id) ? selectedIds.delete(id) : selectedIds.add(id); updateSelectedCount(); }
-function updateSelectedCount() {
-  document.getElementById('selectedCount').textContent = selectedIds.size > 0 ? `(Đã chọn ${selectedIds.size})` : '';
-  document.getElementById('btnBulkDelete').style.display = (selectedIds.size > 0 && currentRole === 'admin') ? 'inline-flex' : 'none';
-}
-function bulkDeleteRecords() {
-  if (!confirm(`Xóa ${selectedIds.size} đơn đã chọn?`)) return;
-  let d = DB.get('declarations') || [];
-  const toDelete = [...selectedIds];
-  DB.set('declarations', d.filter(x => !selectedIds.has(x.id)));
-  // Xóa trên Sheets (nếu có)
-  toDelete.forEach(id => {
-    if (!id.startsWith('LOCAL_')) SHEETS.write('deleteDeclaration', { id }).catch(console.error);
-  });
-  logAction('XÓA NHIỀU', selectedIds.size + ' bản ghi');
-  selectedIds.clear(); updateSelectedCount();
-  toast('success', 'Đã xóa'); loadTable();
+  navigator.clipboard.writeText(code)
+    .then(() => toast('success', '✅ Đã copy Apps Script Code! Vào Extensions → Apps Script → Dán vào → Deploy'))
+    .catch(() => toast('error', 'Trình duyệt không cho phép copy. Hãy copy thủ công.'));
 }
 
 // ============================================================
-// [4] DROPDOWN SEARCH — Xử lý hiển thị gợi ý thông minh
+// 21. ONLINE / OFFLINE DETECTION
 // ============================================================
 
-// Hàm debounce để tránh treo máy khi tìm kiếm trong 100k sản phẩm
-function debounce(func, wait) {
-  let timeout;
-  return function(...args) {
-    clearTimeout(timeout);
-    timeout = setTimeout(() => func.apply(this, args), wait);
-  };
-}
-
-// Cập nhật hàm filterDrop để nhận diện đúng ID sản phẩm động[cite: 1]
-const filterDrop = debounce(function(field, query) {
-  const q = String(query).toLowerCase().trim();
-  let items = [];
-
-  if (field === 'sieuthi' || field === 'filterST') {
-    let all = DB.get('sieuthi') || [];
-    if (currentRole === 'qltp') all = all.filter(s => s.qltpCode === currentUser.code);
-    items = all.filter(s => !q || String(s.name).toLowerCase().includes(q) || String(s.code).toLowerCase().includes(q))
-      .slice(0, 25)
-      .map(s => ({ id: s.id, code: s.code, name: s.name }));
-  } 
-  // SỬA LỖI: Nhận diện tất cả các ô nhập sản phẩm (inputSanpham_0, inputSanpham_1...)
-  else if (field.startsWith('sanpham')) {
-    const all = DB.get('sanpham') || [];
-    items = all.filter(s => !q || String(s.name).toLowerCase().includes(q) || String(s.code).toLowerCase().includes(q))
-      .slice(0, 25)
-      .map(s => ({ id: s.id, code: s.code, name: s.name }));
-  } 
-  else if (field === 'nhanvien') {
-    let all = DB.get('nhanvien') || [];
-    if (currentRole === 'qltp') {
-      const mySTs = (DB.get('sieuthi') || []).filter(s => s.qltpCode === currentUser.code).map(s => s.code);
-      all = all.filter(n => !n.sieuthiCode || mySTs.includes(n.sieuthiCode));
-    }
-    items = all.filter(n => !q || String(n.name).toLowerCase().includes(q) || String(n.code).toLowerCase().includes(q))
-      .slice(0, 25)
-      .map(n => ({ id: n.id, code: n.code, name: n.name, sub: n.sieuthiCode ? `ST: ${n.sieuthiCode}` : '' }));
-  }
-
-  // Xác định đúng ID của danh sách hiển thị (dropdown list)
-  const listId = field === 'filterST' ? 'dropFilterst-list' :
-    field.startsWith('sanpham') ? `drop-${field}-list` :
-    `drop${cap(field)}-list`;
-    
-  const listEl = document.getElementById(listId);
-  if (!listEl) return;
-
-  // Tạo HTML hiển thị danh sách[cite: 1, 2]
-  let html = items.map(it => {
-    const safeItem = JSON.stringify(it).replace(/"/g, '&quot;');
-    return `<div class="dropdown-item" onmousedown="selectDropItem('${field}', ${safeItem})">
-      <span><b style="color:var(--green)">${it.code}</b> - ${it.name}</span>
-    </div>`;
-  }).join('');
-
-  if (q) {
-    html += `<div class="dropdown-item-manual" onmousedown="selectManualItem('${field}','${query.replace(/'/g, "\\'")}')">
-      ✍ Nhập tay: "<strong>${query}</strong>"
-    </div>`;
-  }
-  
-  if (!html) html = `<div style="padding:10px;color:#999;font-size:12px;">Không tìm thấy</div>`;
-
-  listEl.innerHTML = html;
-  listEl.classList.remove('hidden');
-}, 300);
-
-function selectDropItem(field, item) {
-  if (field === 'filterST') {
-    // [4] Format Mã - Tên trong filter
-    document.getElementById('filterSieuthi').value = fCodeName(item.code, item.name);
-    document.getElementById('dropFilterst-list').classList.add('hidden');
-    loadTable();
-    return;
-  }
-  if (field === 'sieuthi') {
-    dropSel.sieuthi = { ...item, isManual: false };
-    document.getElementById('inputSieuthi').value = fCodeName(item.code, item.name);
-    renderTags('sieuthi');
-    document.getElementById('dropSieuthi-list').classList.add('hidden');
-    checkManualEntries();
-    return;
-  }
-  if (field === 'nhanvien') {
-    if (!dropSel.nhanvien.find(n => n.id === item.id)) dropSel.nhanvien.push({ ...item, isManual: false });
-    document.getElementById('inputNhanvien').value = '';
-    renderTags('nhanvien');
-    document.getElementById('dropNhanvien-list').classList.add('hidden');
-    checkManualEntries();
-    return;
-  }
-  // [5] Sanpham field: 'sanpham_0', 'sanpham_1', ...
-  if (field.startsWith('sanpham_')) {
-    const rowIdx = parseInt(field.split('_')[1]);
-    if (productRows[rowIdx] !== undefined) {
-      productRows[rowIdx].sanpham = { ...item, isManual: false };
-      renderProductRowTag(rowIdx);
-      const inputEl = document.getElementById(`inputSanpham_${rowIdx}`);
-      if (inputEl) inputEl.value = fCodeName(item.code, item.name);
-      const listEl = document.getElementById(`drop-sanpham_${rowIdx}-list`);
-      if (listEl) listEl.classList.add('hidden');
-      checkManualEntries();
-    }
-  }
-}
-
-function selectManualItem(field, txt) {
-  if (!txt.trim()) return;
-  if (field === 'filterST') {
-    document.getElementById('filterSieuthi').value = txt;
-    document.getElementById('dropFilterst-list').classList.add('hidden');
-    loadTable();
-    return;
-  }
-  if (field === 'sieuthi') {
-    dropSel.sieuthi = { id: null, code: '', name: txt, isManual: true };
-    document.getElementById('inputSieuthi').value = txt;
-    renderTags('sieuthi');
-    document.getElementById('dropSieuthi-list').classList.add('hidden');
-    checkManualEntries();
-    return;
-  }
-  if (field === 'nhanvien') {
-    dropSel.nhanvien.push({ id: null, code: '', name: txt, isManual: true });
-    document.getElementById('inputNhanvien').value = '';
-    renderTags('nhanvien');
-    document.getElementById('dropNhanvien-list').classList.add('hidden');
-    checkManualEntries();
-    return;
-  }
-  if (field.startsWith('sanpham_')) {
-    const rowIdx = parseInt(field.split('_')[1]);
-    if (productRows[rowIdx] !== undefined) {
-      productRows[rowIdx].sanpham = { id: null, code: '', name: txt, isManual: true };
-      const inputEl = document.getElementById(`inputSanpham_${rowIdx}`);
-      if (inputEl) inputEl.value = txt;
-      renderProductRowTag(rowIdx);
-      const listEl = document.getElementById(`drop-sanpham_${rowIdx}-list`);
-      if (listEl) listEl.classList.add('hidden');
-      checkManualEntries();
-    }
-  }
-}
-
-function removeTag(field, idx) {
-  if (field === 'nhanvien') dropSel.nhanvien.splice(idx, 1);
-  else if (field === 'sieuthi') { dropSel.sieuthi = null; document.getElementById('inputSieuthi').value = ''; }
-  renderTags(field);
-  checkManualEntries();
-}
-
-function renderTags(field) {
-  if (field === 'sieuthi') {
-    const c = document.getElementById('sieuthiSelected');
-    const sel = dropSel.sieuthi;
-    c.innerHTML = sel ? `<span class="tag-item ${sel.isManual ? 'manual' : ''}">
-      ${sel.isManual ? '⚠' : ''}
-      <!-- [4] Mã - Tên trong tag -->
-      ${sel.isManual ? sel.name : fCodeName(sel.code, sel.name)}
-      <span class="remove" onmousedown="removeTag('sieuthi')">×</span>
-    </span>` : '';
-  } else if (field === 'nhanvien') {
-    const c = document.getElementById('nhanvienSelected');
-    c.innerHTML = dropSel.nhanvien.map((n, i) =>
-      `<span class="tag-item ${n.isManual ? 'manual' : ''}">
-        ${n.isManual ? '⚠' : ''}
-        <!-- [4] Mã - Tên trong tag -->
-        ${n.isManual ? n.name : fCodeName(n.code, n.name)}
-        <span class="remove" onmousedown="removeTag('nhanvien',${i})">×</span>
-      </span>`
-    ).join('');
-  }
-}
-
-// [5] Render tag cho 1 product row
-function renderProductRowTag(rowIdx) {
-  const c = document.getElementById(`spTag_${rowIdx}`);
-  if (!c) return;
-  const sp = productRows[rowIdx]?.sanpham;
-  c.innerHTML = sp ? `<span class="tag-item ${sp.isManual ? 'manual' : ''}">
-    ${sp.isManual ? '⚠' : ''} ${sp.isManual ? sp.name : fCodeName(sp.code, sp.name)}
-    <span class="remove" onmousedown="removeSanpham(${rowIdx})">×</span>
-  </span>` : '';
-}
-
-function checkManualEntries() {
-  const hasMnST = dropSel.sieuthi?.isManual;
-  const hasMnNV = dropSel.nhanvien.some(n => n.isManual);
-  const hasMnSP = productRows.some(r => r.sanpham?.isManual);
-  hasManualEntry = hasMnST || hasMnNV || hasMnSP;
-  const notice = document.getElementById('manualNotice');
-  if (notice) notice.classList.toggle('show', hasManualEntry);
-}
-
-document.addEventListener('click', e => {
-  document.querySelectorAll('.dropdown-list').forEach(l => {
-    if (!l.parentElement?.contains(e.target)) l.classList.add('hidden');
-  });
-});
-
-// ============================================================
-// [5] MULTI-PRODUCT ROWS
-// ============================================================
-function addProductRow() {
-  const rowIdx = productRows.length;
-  productRows.push({ sanpham: null });
-  renderProductRows();
-}
-
-function removeSanpham(rowIdx) {
-  productRows[rowIdx].sanpham = null;
-  renderProductRowTag(rowIdx);
-  checkManualEntries();
-}
-
-function removeProductRow(rowIdx) {
-  productRows.splice(rowIdx, 1);
-  renderProductRows();
-  checkManualEntries();
-}
-
-function renderProductRows() {
-  const container = document.getElementById('productRowsContainer');
-  if (!container) return;
-
-  if (productRows.length === 0) {
-    container.innerHTML = `<div style="color:#aaa;font-size:12px;padding:8px;">Nhấn "➕ Thêm sản phẩm" để thêm.</div>`;
-    return;
-  }
-
-  container.innerHTML = productRows.map((row, i) => `
-    <div class="product-row" id="productRow_${i}">
-      <div class="product-row-header">
-        <span>📦 Sản phẩm #${i + 1}</span>
-        <button class="btn btn-danger btn-sm" type="button" onclick="removeProductRow(${i})">Xóa</button>
-      </div>
-      <div class="product-row-body">
-        <div class="form-group" style="margin:0;">
-          <div class="search-drop-wrap">
-            <!-- [4] Placeholder gợi ý format Mã - Tên -->
-            <input class="search-drop-input" id="inputSanpham_${i}" type="text"
-              placeholder="Gõ Mã hoặc Tên sản phẩm (VD: SP01 - Coca Cola)..." autocomplete="off"
-              oninput="filterDrop('sanpham_${i}',this.value)"
-              onfocus="filterDrop('sanpham_${i}',this.value)"
-              value="${row.sanpham ? (row.sanpham.isManual ? row.sanpham.name : fCodeName(row.sanpham.code, row.sanpham.name)) : ''}">
-            <div class="dropdown-list hidden" id="drop-sanpham_${i}-list"></div>
-            <div class="selected-tags" id="spTag_${i}"></div>
-          </div>
-        </div>
-      </div>
-    </div>
-  `).join('');
-
-  // Re-render tags cho các row đã có sanpham
-  productRows.forEach((row, i) => { if (row.sanpham) renderProductRowTag(i); });
-}
-
-// ============================================================
-// TẠO / SỬA KHAI BÁO
-// ============================================================
-
-// Hàm trợ giúp để gán giá trị an toàn, tránh lỗi "null" làm đứng ứng dụng
-function safeSet(id, value, prop = 'value') {
-  const el = document.getElementById(id);
-  if (el) {
-    el[prop] = value;
-  } else {
-    // Chỉ in cảnh báo ra Console để lập trình viên biết, không làm dừng ứng dụng
-    console.warn(`Không tìm thấy phần tử có ID: ${id}`);
-  }
-}
-
-function openCreateModal() {
-  currentEditId = null;
-  dropSel = { sieuthi: null, nhanvien: [] };
-  productRows = []; // Reset danh sách đa sản phẩm
-
-  // Xóa trắng các ô nhập liệu một cách an toàn
-  safeSet('inputSieuthi', '');
-  safeSet('sieuthiSelected', '', 'innerHTML');
-  safeSet('inputNhanvien', '');
-  safeSet('nhanvienSelected', '', 'innerHTML');
-  safeSet('formNgay', '');
-  safeSet('formTuGio', '');
-  safeSet('formDenGio', '');
-
-  // Cập nhật giao diện Modal
-  const notice = document.getElementById('manualNotice');
-  if (notice) notice.classList.remove('show');
-  
-  safeSet('createModalTitle', '➕ Tạo Khai báo Biệt Kích', 'textContent');
-
-  addProductRow(); // Khởi tạo 1 dòng sản phẩm mặc định
-  showModal('createModal');
-}
-
-function openEditModal(id) {
-  const d = (DB.get('declarations') || []).find(x => x.id === id);
-  if (!d) return;
-  currentEditId = id;
-  
-  dropSel.sieuthi = { id: d.sieuthiCode, code: d.sieuthiCode || '', name: d.sieuthiName, isManual: d.isManualSieuthi };
-  dropSel.nhanvien = [...(d.nhanvienList || [])];
-
-  // Khôi phục danh sách đa sản phẩm
-  productRows = (d.sanphamList || []).map(sp => ({ sanpham: { ...sp } }));
-
-  // Gán dữ liệu vào form an toàn
-  safeSet('inputSieuthi', d.isManualSieuthi ? d.sieuthiName : fCodeName(d.sieuthiCode, d.sieuthiName));
-  safeSet('inputNhanvien', '');
-  safeSet('formNgay', d.ngay);
-  safeSet('formTuGio', d.tuGio || '');
-  safeSet('formDenGio', d.denGio || '');
-
-  renderTags('sieuthi');
-  renderTags('nhanvien');
-  renderProductRows();
-  checkManualEntries();
-  
-  safeSet('createModalTitle', '✏ Sửa Khai báo Biệt Kích', 'textContent');
-  showModal('createModal');
-}
-
-async function submitForm() {
-  const st = dropSel.sieuthi;
-  const nv = dropSel.nhanvien;
-  const ngay = document.getElementById('formNgay')?.value;
-  const tG = document.getElementById('formTuGio')?.value;
-  const dG = document.getElementById('formDenGio')?.value;
-
-  // Ràng buộc dữ liệu
-  if (!st) return toast('error', 'Chọn Siêu thị!');
-  if (productRows.length === 0) return toast('error', 'Thêm ít nhất 1 sản phẩm!');
-  
-  for (let i = 0; i < productRows.length; i++) {
-    if (!productRows[i].sanpham) return toast('error', `Sản phẩm #${i + 1} chưa được chọn!`);
-  }
-  
-  if (!ngay) return toast('error', 'Chọn Ngày!');
-  if (nv.length === 0) return toast('error', 'Chọn ít nhất 1 Nhân viên!');
-  
-  const timeErr = validateTime(tG, dG);
-  if (timeErr) return toast('error', timeErr);
-
-  // Chuẩn bị danh sách sản phẩm để lưu
-  const sanphamList = productRows.map(r => ({
-    id: r.sanpham.id || null,
-    code: r.sanpham.code || '',
-    name: r.sanpham.name,
-    isManual: r.sanpham.isManual || false
-  }));
-
-  let decls = DB.get('declarations') || [];
-
-  if (currentEditId) {
-    // Logic cập nhật đơn cũ[cite: 1]
-    const idx = decls.findIndex(x => x.id === currentEditId);
-    decls[idx] = {
-      ...decls[idx],
-      sieuthiCode: st.code, sieuthiName: st.name, isManualSieuthi: st.isManual,
-      ngay, tuGio: tG, denGio: dG,
-      sanphamList,
-      nhanvienList: nv,
-      status: 'pending', updatedAt: new Date().toISOString()
-    };
-    DB.set('declarations', decls);
-    logAction('SỬA ĐƠN', currentEditId);
-    if (!decls[idx].id.startsWith('LOCAL_')) {
-      await SHEETS.write('updateStatus', { id: decls[idx].id, status: 'pending', rejectReason: '' }).catch(console.error);
-    }
-    toast('success', 'Cập nhật thành công!');
-  } else {
-    // Logic tạo đơn mới[cite: 1]
-    const newId = SHEETS.canWrite ? 'BK' + Date.now().toString().slice(-8) : 'LOCAL_' + Date.now().toString().slice(-8);
-    const newDecl = {
-      id: newId,
-      authorCode: currentUser.code, authorName: currentUser.name,
-      sieuthiCode: st.code || '', sieuthiName: st.name, isManualSieuthi: st.isManual || false,
-      ngay, tuGio: tG, denGio: dG,
-      sanphamList, nhanvienList: nv,
-      status: 'pending',
-      createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
-      rejectReason: ''
-    };
-    decls.unshift(newDecl);
-    DB.set('declarations', decls);
-
-    const pushed = await pushDeclToSheets(newDecl);
-    pushed ? toast('success', '✅ Đã đồng bộ Sheets!') : toast('warning', '⚠ Lưu local thành công!');
-    logAction('TẠO ĐƠN', newId);
-  }
-
-  // SỬA VẤN ĐỀ 3: Cập nhật bộ lọc để thấy đơn vừa tạo ngay lập tức
-  safeSet('filterTuNgay', ngay);
-  safeSet('filterDenNgay', ngay);
-  safeSet('filterSieuthi', '');
-
-  closeModal('createModal');
-  loadTable();
-}
-
-// ============================================================
-// DUYỆT / TỪ CHỐI (chỉ Admin)
-// ============================================================
-function openRejectModal(id) {
-  rejectTargetId = id;
-  document.getElementById('rejectReasonInput').value = '';
-  showModal('rejectModal');
-}
-
-async function confirmReject() {
-  const rs = document.getElementById('rejectReasonInput').value;
-  if (!rs) return toast('error', 'Nhập lý do!');
-  let decls = DB.get('declarations') || [];
-  const ids = rejectTargetId === '__bulk__' ? [...selectedIds] : [rejectTargetId];
-  decls.forEach(d => {
-    if (ids.includes(d.id) && d.status === 'pending') {
-      d.status = 'rejected'; d.rejectReason = rs;
-    }
-  });
-  DB.set('declarations', decls);
-  // Sync lên Sheets
-  for (const id of ids) {
-    await updateDeclStatusInSheets(id, 'rejected', rs).catch(console.error);
-  }
-  if (rejectTargetId === '__bulk__') selectedIds.clear();
-  logAction('TỪ CHỐI', rs);
-  closeModal('rejectModal');
-  loadTable();
-  toast('warning', 'Đã từ chối');
-}
-
-async function deleteRecord(id) {
-  if (!confirm('Xóa bản ghi này?')) return;
-  let d = DB.get('declarations') || [];
-  DB.set('declarations', d.filter(x => x.id !== id));
-  if (!id.startsWith('LOCAL_')) {
-    await SHEETS.write('deleteDeclaration', { id }).catch(console.error);
-  }
-  logAction('XÓA', id);
-  loadTable();
-  toast('success', 'Đã xóa');
-}
-
-// ============================================================
-// DETAIL VIEW
-// ============================================================
-function openDetail(id) {
-  const d = (DB.get('declarations') || []).find(x => x.id === id);
-  if (!d) return;
-
-  // [5] Multi-product display
-  const spHtml = (d.sanphamList || []).map((sp, i) =>
-    `<div style="padding:4px 8px;background:#f0fff4;border-radius:4px;margin-bottom:4px;font-size:12px;">
-      #${i + 1}: ${sp.isManual ? `<span class="manual-tag">⚠ ${sp.name}</span>` : `<b>${fCodeName(sp.code, sp.name)}</b>`}
-    </div>`
-  ).join('');
-
-  const manuals = [];
-  if (d.isManualSieuthi) manuals.push(`⚠ Siêu thị nhập tay: ${d.sieuthiName}`);
-  (d.sanphamList || []).filter(s => s.isManual).forEach(s => manuals.push(`⚠ SP nhập tay: ${s.name}`));
-  (d.nhanvienList || []).filter(n => n.isManual).forEach(n => manuals.push(`⚠ NV nhập tay: ${n.name}`));
-  const manualHtml = manuals.length
-    ? `<div style="background:#fff3cd;border:1px solid #ffc107;border-radius:4px;padding:8px;margin-top:10px;font-size:12px;"><b>⚠ Dữ liệu nhập tay — cần gửi Admin:</b><br>${manuals.join('<br>')}</div>`
-    : '';
-
-  document.getElementById('detailModalBody').innerHTML = `
-    <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;font-size:13px;">
-      <div><b>Mã đơn:</b> ${d.id}</div>
-      <div><b>Trạng thái:</b> ${{ pending:'Chờ duyệt', approved:'Đã duyệt', rejected:'Từ chối' }[d.status]}</div>
-      <div><b>Người tạo:</b> ${fCodeName(d.authorCode, d.authorName)}</div>
-      <div><b>Ngày tạo:</b> ${fDate(d.createdAt)}</div>
-      <div><b>Siêu thị:</b> ${fCodeName(d.sieuthiCode, d.sieuthiName)}</div>
-      <div><b>Ngày BK:</b> ${fDate(d.ngay)}</div>
-      <!-- [3] Giờ 24h -->
-      <div style="grid-column:span 2;"><b>Giờ:</b> ${fTime(d.tuGio)} → ${fTime(d.denGio)}</div>
-    </div>
-    <!-- [5] Multi-product -->
-    <div style="margin-top:12px;"><b>Danh sách Sản phẩm:</b><div style="margin-top:6px;">${spHtml || '<i style="color:#aaa">Chưa có</i>'}</div></div>
-    <div style="margin-top:10px;"><b>Nhân viên:</b> ${(d.nhanvienList || []).map(n => n.isManual ? `<span class="manual-tag">⚠ ${n.name}</span>` : fCodeName(n.code, n.name)).join(', ')}</div>
-    ${d.rejectReason ? `<div style="margin-top:10px;background:#ffebee;padding:8px;border-radius:4px;font-size:12px;"><b>Lý do từ chối:</b> ${d.rejectReason}</div>` : ''}
-    ${manualHtml}`;
-
-  document.getElementById('detailModalFooter').innerHTML = `<button class="btn btn-secondary" onclick="closeModal('detailModal')">Đóng</button>`;
-  showModal('detailModal');
-}
-
-// ============================================================
-// MANUAL LIST
-// ============================================================
-function openManualListModal() {
-  const decls = DB.get('declarations') || [];
-  let stManual = [], spManual = [], nvManual = [];
-  decls.forEach(d => {
-    if (d.isManualSieuthi) stManual.push({ from: fCodeName(d.authorCode, d.authorName), value: d.sieuthiName, id: d.id });
-    (d.sanphamList || []).filter(s => s.isManual).forEach(s => spManual.push({ from: fCodeName(d.authorCode, d.authorName), value: s.name, id: d.id }));
-    (d.nhanvienList || []).filter(n => n.isManual).forEach(n => nvManual.push({ from: fCodeName(d.authorCode, d.authorName), value: n.name, id: d.id }));
-  });
-  const makeTable = (title, items) => {
-    if (!items.length) return '';
-    return `<div style="margin-bottom:14px;"><h4 style="color:#e65100;margin-bottom:6px;">${title} (${items.length})</h4>
-      <table class="manual-list-table"><thead><tr><th>Mã đơn</th><th>Người tạo</th><th>Giá trị nhập tay</th></tr></thead>
-      <tbody>${items.map(x => `<tr><td>${x.id}</td><td>${x.from}</td><td>${x.value}</td></tr>`).join('')}</tbody></table></div>`;
-  };
-  const total = stManual.length + spManual.length + nvManual.length;
-  document.getElementById('manualListContent').innerHTML = total
-    ? makeTable('🏪 Siêu thị nhập tay', stManual) + makeTable('📦 Sản phẩm nhập tay', spManual) + makeTable('👥 Nhân viên nhập tay', nvManual)
-    : `<div class="empty-state"><div class="icon">✅</div>Không có dữ liệu nhập tay</div>`;
-  showModal('manualListModal');
-}
-function copyManualList() {
-  navigator.clipboard.writeText(document.getElementById('manualListContent').innerText)
-    .then(() => toast('success', 'Đã copy! Gửi cho Hải Phú qua BCNB'));
-}
-
-// ============================================================
-// EXPORT & IMPORT
-// ============================================================
-function exportExcel() {
-  // [5] Flatten sanphamList thành cột SP1, SP2, ...
-  const maxSP = Math.max(1, ...filteredDeclarations.map(d => (d.sanphamList || []).length));
-  const spHeaders = [];
-  for (let i = 1; i <= maxSP; i++) { spHeaders.push(`Mã SP${i}`, `Tên SP${i}`); }
-
-  const header = ['Mã Đơn', 'QLTP Mã', 'QLTP Tên', 'Siêu thị Mã', 'Siêu thị Tên', 'Ngày', 'Từ giờ', 'Đến giờ', ...spHeaders, 'DS NV', 'Trạng thái', 'Ngày tạo'];
-  const data = filteredDeclarations.map(d => {
-    const spCols = [];
-    for (let i = 0; i < maxSP; i++) {
-      const sp = (d.sanphamList || [])[i];
-      spCols.push(sp ? sp.code : '', sp ? sp.name : '');
-    }
-    return [
-      d.id, d.authorCode, d.authorName,
-      d.sieuthiCode, d.sieuthiName,
-      fDate(d.ngay),
-      // [3] Format 24h khi export
-      fTime(d.tuGio), fTime(d.denGio),
-      ...spCols,
-      (d.nhanvienList || []).map(n => fCodeName(n.code, n.name)).join('; '),
-      d.status, fDate(d.createdAt)
-    ];
-  });
-  const ws = XLSX.utils.aoa_to_sheet([header, ...data]);
-  const wb = XLSX.utils.book_new();
-  XLSX.utils.book_append_sheet(wb, ws, 'KhaiBao');
-  XLSX.writeFile(wb, `BietKich_${new Date().toISOString().split('T')[0]}.xlsx`);
-  logAction('EXPORT', filteredDeclarations.length + ' dòng');
-}
-
-function downloadTemplateExcel() {
-  const d = [
-    // [5] Hỗ trợ nhiều SP — dùng dấu ; phân cách
-    ['Siêu thị (Mã hoặc Tên)', 'Ngày (DD/MM/YYYY)', 'Từ giờ (HH:MM 24h)', 'Đến giờ (HH:MM 24h)', 'Mã SP (nhiều SP cách nhau ;)', 'Tên SP (nhiều SP cách nhau ;)', 'DS NV (cách nhau ;)'],
-    ['BHX_HCM_001', '25/04/2026', '08:00', '20:00', '1053090000397;9876543210', 'BÁNH DD AFC;Nước suối', '268789 - Nguyễn Hải Phú; 27506 - Bá Thành']
-  ];
-  const ws = XLSX.utils.aoa_to_sheet(d);
-  const wb = XLSX.utils.book_new();
-  XLSX.utils.book_append_sheet(wb, ws, 'Template');
-  XLSX.writeFile(wb, 'Template_KhaiBao.xlsx');
-  toast('success', '✅ Đã tải file mẫu!');
-}
-
-function openImportModal() {
-  document.getElementById('fileImportInput').value = '';
-  document.getElementById('bulkPreview').innerHTML = '';
-  document.getElementById('btnImportSubmit').disabled = true;
-  showModal('importModal');
-}
-
-function handleExcelUpload(e) {
-  const f = e.target.files[0]; if (!f) return;
-  const r = new FileReader();
-  r.onload = evt => {
-    const wb = XLSX.read(new Uint8Array(evt.target.result), { type: 'array' });
-    const rows = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], { header: 1, defval: '' });
-    if (rows.length < 2) return toast('error', 'File rỗng!');
-    parseImportKB(rows.slice(1));
-  };
-  r.readAsArrayBuffer(f);
-}
-
-function parseImportKB(rows) {
-  parsedBulkRows = [];
-  const mstST = DB.get('sieuthi') || [];
-  const mstSP = DB.get('sanpham') || [];
-  const mstNV = DB.get('nhanvien') || [];
-  let html = '', valid = 0, errors = 0;
-
-  rows.forEach((r, i) => {
-    if (!r[0] && !r[1]) return;
-    const st = String(r[0] || '').trim();
-    const dt = String(r[1] || '').trim();
-    const t1 = String(r[2] || '').trim();
-    const t2 = String(r[3] || '').trim();
-    // [5] Nhiều SP cách nhau dấu ;
-    const spCodes = String(r[4] || '').split(';').map(x => x.trim()).filter(Boolean);
-    const spNames = String(r[5] || '').split(';').map(x => x.trim()).filter(Boolean);
-    const nvRaw = String(r[6] || '').trim();
-
-    let errs = [], isWarn = false;
-    let stObj = mstST.find(s => String(s.name).toLowerCase() === st.toLowerCase() || String(s.code) === st);
-    if (!stObj) isWarn = true;
-    if (currentRole === 'qltp' && stObj && stObj.qltpCode !== currentUser.code) errs.push('ST ngoài quyền');
-
-    let pDt = dt;
-    if (dt.includes('/')) {
-      try {
-        const parts = dt.split('/');
-        pDt = parts[0].length === 4
-          ? `${parts[0]}-${parts[1].padStart(2,'0')}-${parts[2].padStart(2,'0')}`
-          : `${parts[2]}-${parts[1].padStart(2,'0')}-${parts[0].padStart(2,'0')}`;
-      } catch {}
-    }
-    if (!pDt || pDt.includes('undefined')) errs.push('Sai ngày');
-    if (t1 && t2) { const tErr = validateTime(t1, t2); if (tErr) errs.push('Giờ sai'); }
-    else errs.push('Thiếu giờ');
-
-    // [5] Parse danh sách SP
-    const sanphamList = spCodes.map((code, idx) => {
-      const name = spNames[idx] || code;
-      const found = mstSP.find(s => String(s.code) === code || String(s.name).toLowerCase() === name.toLowerCase());
-      return found
-        ? { id: found.id, code: found.code, name: found.name, isManual: false }
-        : { id: null, code: code || '', name: name, isManual: true };
-    });
-    if (sanphamList.length === 0) errs.push('Thiếu SP');
-
-    // [4] Parse NV với format "Mã - Tên" hoặc "Mã Tên"
-    let nvs = nvRaw.split(';').filter(x => x.trim()).map(n => {
-      n = n.trim();
-      // Hỗ trợ "268789 - Nguyễn Hải Phú" và "268789"
-      let code = '', name = n;
-      const dashIdx = n.indexOf(' - ');
-      if (dashIdx > 0) { code = n.substring(0, dashIdx).trim(); name = n.substring(dashIdx + 3).trim(); }
-      else { const m = n.match(/^(\d+)\s+(.+)/); if (m) { code = m[1]; name = m[2]; } }
-      const fN = mstNV.find(x => String(x.code) === code || String(x.name).toLowerCase() === name.toLowerCase());
-      return fN ? { id: fN.id, code: fN.code, name: fN.name, isManual: false } : { id: null, code, name, isManual: true };
-    });
-
-    const blocked = errs.length > 0;
-    if (blocked) errors++;
-    else {
-      valid++;
-      parsedBulkRows.push({ stName: st, stCode: stObj?.code || '', stId: stObj?.id || null, isManualST: !stObj, ngay: pDt, tuGio: t1, denGio: t2, sanphamList, nvParsed: nvs });
-    }
-
-    html += `<div class="bulk-row ${blocked ? 'error' : isWarn || sanphamList.some(s => s.isManual) ? 'manual' : 'valid'}">
-      <span style="width:30px;color:#999;">#${i + 2}</span>
-      <span>${blocked ? '❌' : isWarn ? '⚠' : '✅'} ${st} | ${spCodes.join(',')} | ${dt} | ${t1}-${t2}</span>
-      ${errs.length ? `<span style="margin-left:auto;color:red;font-size:11px;">${errs.join(', ')}</span>` : ''}
-    </div>`;
-  });
-
-  document.getElementById('bulkPreview').innerHTML =
-    `<div style="padding:8px;font-weight:bold;border-bottom:1px solid #eee;">Hợp lệ: <span style="color:green">${valid}</span> | Lỗi: <span style="color:red">${errors}</span></div>${html}`;
-  document.getElementById('btnImportSubmit').disabled = valid === 0;
-}
-
-async function submitBulkImport() {
-  let d = DB.get('declarations') || [];
-  const newDecls = parsedBulkRows.map(r => ({
-    id: SHEETS.canWrite ? 'BK' + Date.now().toString().slice(-8) + Math.random().toString(36).slice(-3) : 'LOCAL_' + Date.now().toString().slice(-8) + Math.random().toString(36).slice(-3),
-    authorCode: currentUser.code, authorName: currentUser.name,
-    sieuthiCode: r.stCode, sieuthiName: r.stName, isManualSieuthi: r.isManualST,
-    ngay: r.ngay, tuGio: r.tuGio, denGio: r.denGio,
-    sanphamList: r.sanphamList,
-    nhanvienList: r.nvParsed,
-    status: 'pending', createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(), rejectReason: ''
-  }));
-  d.unshift(...newDecls);
-  DB.set('declarations', d);
-
-  // Đẩy lên Sheets
-  let pushed = 0;
-  for (const decl of newDecls) {
-    const ok = await pushDeclToSheets(decl);
-    if (ok) pushed++;
-  }
-
-  logAction('IMPORT KHAI BÁO', parsedBulkRows.length + ' dòng');
-  closeModal('importModal');
-  toast('success', `✅ Import ${parsedBulkRows.length} đơn${pushed > 0 ? `, đã sync ${pushed} lên Sheets` : ' (local)'}`);
-  loadTable();
-}
-
-// ============================================================
-// HISTORY
-// ============================================================
-function openHistoryModal() {
-  let hist = DB.get('historyLog') || [];
-  if (currentRole !== 'admin') hist = hist.filter(h => h.user && String(h.user).includes(currentUser.code));
-  const tbody = document.getElementById('historyBody');
-  tbody.innerHTML = hist.length ? hist.map(h =>
-    `<tr>
-      <td style="padding:8px;white-space:nowrap;font-size:11px;">${h.time}</td>
-      <td style="padding:8px;font-weight:bold;font-size:11px;">${h.user}</td>
-      <td style="padding:8px;color:var(--blue);font-size:11px;">${h.action}</td>
-      <td style="padding:8px;font-size:11px;">${h.detail}</td>
-    </tr>`
-  ).join('') : `<tr><td colspan="4" align="center" style="padding:20px;color:#999;">Chưa có lịch sử</td></tr>`;
-  document.getElementById('btnClearHistory').style.display = currentRole === 'admin' ? 'block' : 'none';
-  showModal('historyModal');
-}
-function clearHistory() {
-  if (!confirm('Xóa sạch lịch sử?')) return;
-  DB.set('historyLog', []);
-  openHistoryModal();
-}
-
-// ============================================================
-// MASTER DATA CONTROL
-// ============================================================
-function openMasterDataModal() {
-  updateStatChips();
-  loadSheetConfigToForm();
-  switchMasterTab('importData');
-  showModal('masterDataModal');
-}
-
-function switchMasterTab(t) {
-  const tabs = ['importData', 'sheetsConfig', 'users', 'sieuthi', 'sanpham', 'nhanvien'];
-  tabs.forEach(x => {
-    const el = document.getElementById(`masterTab${cap(x)}`);
-    if (el) el.classList.remove('active');
-  });
-  document.querySelectorAll('.tab-btn').forEach(btn => btn.classList.remove('active'));
-  const target = document.getElementById(`masterTab${cap(t)}`);
-  if (target) target.classList.add('active');
-  document.querySelectorAll('.tab-btn').forEach(btn => {
-    if (btn.getAttribute('onclick')?.includes(`'${t}'`)) btn.classList.add('active');
-  });
-  if (!['importData', 'sheetsConfig'].includes(t)) {
-    const el = document.getElementById(`search${cap(t)}`);
-    if (el) el.value = '';
-    renderMasterList(t);
-  }
-}
-
-function renderMasterList(type) {
-  const el = document.getElementById(`master${cap(type)}List`);
-  if (!el) return;
-  let q = '';
-  const searchEl = document.getElementById(`search${cap(type)}`);
-  if (searchEl) q = searchEl.value.toLowerCase().trim();
-
-  if (type === 'users') {
-    const qltpList = DB.get('qltpList') || [];
-    const filtered = qltpList.filter(u => !q || String(u.code).toLowerCase().includes(q) || String(u.name).toLowerCase().includes(q));
-    let rows = `<tr style="background:#fff3cd;"><td style="padding:6px;">admin</td><td style="padding:6px;">Admin BHX</td><td style="padding:6px;color:#666;font-weight:600;">Admin</td><td></td></tr>`;
-    filtered.forEach(u => {
-      // [4] Format Mã - Tên trong table
-      rows += `<tr><td style="padding:6px;">${u.code}</td><td style="padding:6px;">${u.name}</td><td style="padding:6px;color:var(--green);font-weight:600;">QLTP</td><td><button class="btn btn-sm btn-danger" onclick="delUser('${u.code}')">Xóa</button></td></tr>`;
-    });
-    el.innerHTML = `<table style="width:100%;border-collapse:collapse;font-size:12px;"><thead><tr style="background:#eee;"><th style="padding:6px;">Mã</th><th style="padding:6px;">Tên</th><th style="padding:6px;">Phân hệ</th><th></th></tr></thead><tbody>${rows}</tbody></table>`;
-  } else {
-    const items = DB.get(type) || [];
-    const filtered = items.filter(s => !q || String(s.code).toLowerCase().includes(q) || String(s.name).toLowerCase().includes(q));
-    const limit = filtered.slice(0, 100);
-    let tbl = `<table style="width:100%;border-collapse:collapse;font-size:12px;"><thead><tr style="background:#eee;"><th style="padding:6px;">Mã</th><th style="padding:6px;">Tên</th><th style="padding:6px;">Thêm</th><th></th></tr></thead><tbody>`;
-    tbl += limit.map(s => `<tr>
-      <td style="padding:6px;">${s.code}</td>
-      <!-- [4] Hiển thị Mã - Tên ở cột tên -->
-      <td style="padding:6px;">${s.name}</td>
-      <td style="padding:6px;color:#888;">${type === 'sieuthi' ? (s.qltpCode || '--') : (s.sieuthiCode || s.type || '')}</td>
-      <td><button class="btn btn-sm btn-danger" onclick="delMaster('${type}','${s.id}')">Xóa</button></td>
-    </tr>`).join('');
-    tbl += `</tbody></table>`;
-    if (filtered.length > 100) tbl += `<p style="font-size:11px;color:orange;padding:5px;">... và ${filtered.length - 100} kết quả khác.</p>`;
-    el.innerHTML = tbl;
-  }
-}
-
-// [2] addMasterUser chỉ còn thêm QLTP
-function addMasterUser() {
-  const c = document.getElementById('newUserCode').value.trim();
-  const n = document.getElementById('newUserName').value.trim();
-  if (!c || !n) return toast('error', 'Nhập đủ Mã và Tên!');
-  let list = DB.get('qltpList') || [];
-  if (list.find(x => String(x.code).toUpperCase() === c.toUpperCase())) return toast('error', 'Mã đã tồn tại!');
-  list.push({ code: c, name: n });
-  DB.set('qltpList', list);
-  toast('success', 'Đã thêm QLTP!');
-  updateStatChips();
-  renderMasterList('users');
-}
-
-// [2] delUser chỉ xóa QLTP
-function delUser(code) {
-  if (!confirm('Xóa tài khoản QLTP này?')) return;
-  DB.set('qltpList', (DB.get('qltpList') || []).filter(u => u.code !== code));
-  updateStatChips();
-  renderMasterList('users');
-}
-
-function addMasterItem(type) {
-  const c = document.getElementById(`new${cap(type)}Code`).value.trim();
-  const n = document.getElementById(`new${cap(type)}Name`).value.trim();
-  if (!c || !n) return toast('error', 'Nhập đủ Mã và Tên!');
-  let items = DB.get(type) || [];
-  if (items.find(x => String(x.code) === c)) return toast('error', 'Trùng mã!');
-  const obj = { id: c, code: c, name: n };
-  if (type === 'sieuthi') obj.qltpCode = document.getElementById('newSieuthiQLTP').value.trim();
-  if (type === 'nhanvien') obj.sieuthiCode = document.getElementById('newNhanvienST').value.trim();
-  items.push(obj);
-  DB.set(type, items);
-  updateStatChips();
-  toast('success', 'Đã thêm');
-  renderMasterList(type);
-}
-
-function delMaster(type, id) {
-  if (!confirm('Xóa?')) return;
-  DB.set(type, (DB.get(type) || []).filter(x => x.id !== id));
-  updateStatChips();
-  renderMasterList(type);
-}
+window.addEventListener('online',  () => document.getElementById('offlineBanner').classList.remove('show'));
+window.addEventListener('offline', () => document.getElementById('offlineBanner').classList.add('show'));
+if (!navigator.onLine) document.getElementById('offlineBanner').classList.add('show');
