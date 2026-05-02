@@ -4,7 +4,145 @@
 // Không dùng IndexedDB. Mọi thao tác ghi → Apps Script ngay lập tức.
 // Master data load từ Sheets sau khi login thành công.
 // ============================================================
+// ============================================================
+// PATCH CHO app.js — dán đè các hàm này vào file app.js
+// ============================================================
 
+// ── FIX #1: afterLogin — Admin vào được dù chưa có URL ──────
+// Thay toàn bộ hàm afterLogin() hiện tại bằng hàm này:
+
+async function afterLogin() {
+  const isAdmin = currentUser.role === 'admin';
+
+  // Admin không có URL → vào thẳng, mở config ngay
+  if (isAdmin && !WEB_APP_URL) {
+    document.getElementById('loginScreen').classList.add('hidden');
+    document.getElementById('appShell').classList.add('show');
+    setupUI();
+    setSyncStatus('error', 'Chưa có URL');
+    toast('warning', '⚠ Chưa có Web App URL — Vui lòng cấu hình trước');
+    // Mở thẳng Master Data → tab Sheets Config
+    openMasterModal();
+    switchTab('sheets');
+    return;
+  }
+
+  showLoading('Đang tải dữ liệu...');
+  try {
+    await loadAllData();
+    hideLoading();
+    document.getElementById('loginScreen').classList.add('hidden');
+    document.getElementById('appShell').classList.add('show');
+    setupUI();
+    applyFilter();
+    setSyncStatus('ok', 'Đã kết nối');
+    logActivity('ĐĂNG NHẬP', null, '');
+  } catch (err) {
+    hideLoading();
+    document.getElementById('loginError').textContent = '❌ Lỗi tải dữ liệu: ' + err.message;
+    document.getElementById('loginError').style.display = '';
+  }
+}
+
+// ── FIX #2: fTime — chuẩn hóa hiển thị giờ HH:MM ───────────
+// Thay hàm fTime() hiện tại:
+
+function fTime(t) {
+  if (!t) return '--';
+  const s = String(t).trim();
+  // Xử lý cả "8:0", "08:00", "8:00", "800" nếu có
+  const parts = s.split(':');
+  if (parts.length >= 2) {
+    return String(parts[0]).padStart(2, '0') + ':' + String(parts[1]).padStart(2, '0');
+  }
+  // Nếu dạng số (800 → 08:00)
+  if (/^\d{3,4}$/.test(s)) {
+    const h = s.slice(0, s.length - 2);
+    const m = s.slice(-2);
+    return h.padStart(2, '0') + ':' + m;
+  }
+  return s;
+}
+
+// ── FIX #3: parseImport — chuẩn hóa giờ khi import Excel ───
+// Thêm hàm helper này vào trước parseImport():
+
+function normalizeTime(raw) {
+  const s = String(raw || '').trim();
+  if (!s) return '';
+  // Đã đúng HH:MM
+  if (/^\d{2}:\d{2}$/.test(s)) return s;
+  // H:MM hoặc HH:M
+  if (/^\d{1,2}:\d{1,2}$/.test(s)) {
+    const [h, m] = s.split(':');
+    return h.padStart(2, '0') + ':' + m.padStart(2, '0');
+  }
+  // Số Excel (0.333... = 8:00)
+  if (!isNaN(s) && s !== '') {
+    const totalMin = Math.round(parseFloat(s) * 24 * 60);
+    const h = Math.floor(totalMin / 60);
+    const m = totalMin % 60;
+    return String(h).padStart(2, '0') + ':' + String(m).padStart(2, '0');
+  }
+  return s;
+}
+
+// Trong parseImport(), thay 2 dòng:
+//   const tuGio   = String(r[2] || '').trim();
+//   const denGio  = String(r[3] || '').trim();
+// Thành:
+//   const tuGio   = normalizeTime(r[2]);
+//   const denGio  = normalizeTime(r[3]);
+
+
+// ── FIX #4: batchCreate — dùng setValues thay appendRow ──────
+// (đã xử lý phía GAS, phía JS không cần thay đổi logic)
+// Tuy nhiên, thêm timeout nhỏ để tránh rate limit nếu GAS trả lỗi 429:
+
+async function doImport() {
+  if (!importRows.length) return;
+  showLoading(`Đang import ${importRows.length} dòng...`);
+  try {
+    const newDecls = importRows.map(r => ({
+      id:           genId(),
+      authorCode:   currentUser.code,
+      authorName:   currentUser.name,
+      sieuthiCode:  r.stCode,
+      sieuthiName:  r.stName,
+      ngay:         r.ngay,
+      tuGio:        r.tuGio,
+      denGio:       r.denGio,
+      sanphamList:  JSON.stringify(r.sanphamList),
+      nhanvienList: JSON.stringify(r.nhanvienList),
+      rowStatus:    'active',
+      createdAt:    nowISO(),
+      updatedAt:    nowISO()
+    }));
+
+    const r = await gasPost({ action: 'batchCreateDeclarations', rows: newDecls });
+    if (!r.ok) { hideLoading(); return toast('error', r.msg || 'Lỗi import!'); }
+
+    const done = r.data?.count || newDecls.length;
+
+    // Cập nhật local state — map đúng sanphamList/nhanvienList object
+    newDecls.forEach((d, idx) => {
+      declarations.unshift({
+        ...d,
+        sanphamList:  importRows[idx].sanphamList,
+        nhanvienList: importRows[idx].nhanvienList
+      });
+    });
+
+    await logActivity('IMPORT', null, `${done} dòng`);
+    closeModal('modalImport');
+    applyFilter();
+    toast('success', `✅ Import thành công ${done} khai báo!`);
+  } catch (err) {
+    toast('error', 'Lỗi import: ' + err.message);
+  } finally {
+    hideLoading();
+  }
+}
 // ============================================================
 // 1. CẤU HÌNH & TRẠNG THÁI TOÀN CỤC
 // ============================================================
