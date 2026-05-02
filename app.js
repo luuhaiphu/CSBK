@@ -124,7 +124,10 @@ function debounce(fn, ms) {
 
 async function gasGet(params) {
   const qs = new URLSearchParams(params).toString();
-  const res = await fetch(`${WEB_APP_URL}?${qs}`);
+  const res = await fetch(`${WEB_APP_URL}?${qs}`, {
+    redirect: 'follow',
+    credentials: 'omit'   // ← thêm dòng này
+  });
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
   return await res.json();
 }
@@ -132,6 +135,8 @@ async function gasGet(params) {
 async function gasPost(payload) {
   const res = await fetch(WEB_APP_URL, {
     method: 'POST',
+    redirect: 'follow',
+    credentials: 'omit',   // ← thêm dòng này
     headers: { 'Content-Type': 'text/plain' },
     body: JSON.stringify(payload)
   });
