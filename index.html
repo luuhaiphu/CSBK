@@ -524,13 +524,18 @@ tbody td:first-child { text-align: center; }
 </head>
 <body>
 
+<!-- ── TOAST ── -->
 <div class="toast-wrap" id="toastWrap"></div>
 
+<!-- ── LOADING ── -->
 <div id="loadingOverlay">
   <div class="spinner"></div>
   <div class="loading-text" id="loadingText">Đang tải...</div>
 </div>
 
+<!-- ============================================================
+     LOGIN SCREEN
+     ============================================================ -->
 <div id="loginScreen">
   <div class="login-card">
     <div class="login-card-header">
@@ -539,11 +544,13 @@ tbody td:first-child { text-align: center; }
       <p>Hệ thống khai báo bán hàng đội Biệt Kích</p>
     </div>
     <div class="login-card-body">
+      <!-- Role tabs -->
       <div class="login-role-tabs">
         <button class="login-role-tab active" id="tabQLTP" onclick="switchLoginRole('qltp')">👤 QLTP</button>
         <button class="login-role-tab" id="tabAdmin" onclick="switchLoginRole('admin')">🔐 Admin</button>
       </div>
 
+      <!-- QLTP fields -->
       <div id="loginFieldQLTP">
         <div class="form-group">
           <label>Mã QLTP của bạn</label>
@@ -562,6 +569,7 @@ tbody td:first-child { text-align: center; }
         </div>
       </div>
 
+      <!-- Admin fields -->
       <div id="loginFieldAdmin" style="display:none;">
         <div class="form-group">
           <label>Mật khẩu Admin</label>
@@ -578,7 +586,11 @@ tbody td:first-child { text-align: center; }
   </div>
 </div>
 
+<!-- ============================================================
+     APP SHELL
+     ============================================================ -->
 <div id="appShell">
+  <!-- HEADER -->
   <div class="header">
     <span class="header-logo">🦅</span>
     <div class="header-title">
@@ -595,10 +607,12 @@ tbody td:first-child { text-align: center; }
     </div>
   </div>
 
+  <!-- OFFLINE BANNER -->
   <div class="offline-banner" id="offlineBanner">
     ⚠ Không có kết nối Internet — Vui lòng kiểm tra mạng và tải lại trang
   </div>
 
+  <!-- ROLE BAR -->
   <div class="role-bar">
     <div class="role-pill" id="rolePill">...</div>
     <span id="roleUserText" style="font-weight:600; color:var(--gray-800);"></span>
@@ -608,8 +622,10 @@ tbody td:first-child { text-align: center; }
     <button class="btn-logout" onclick="doLogout()">⬅ Đăng xuất</button>
   </div>
 
+  <!-- MAIN -->
   <div class="main">
 
+    <!-- FILTER -->
     <div class="card filter-card">
       <div class="filter-row">
         <div class="filter-group">
@@ -637,6 +653,7 @@ tbody td:first-child { text-align: center; }
       </div>
     </div>
 
+    <!-- ACTION BAR -->
     <div class="action-bar">
       <button class="btn btn-green btn-sm" onclick="exportExcel()">📥 Export Excel</button>
       <button class="btn btn-blue btn-sm" id="btnImport" onclick="openImportModal()">📤 Import</button>
@@ -650,6 +667,7 @@ tbody td:first-child { text-align: center; }
       </div>
     </div>
 
+    <!-- TABLE -->
     <div class="card table-card">
       <div class="table-topbar">
         <input type="checkbox" id="checkAll" onchange="toggleSelectAll(this.checked)">
@@ -667,7 +685,7 @@ tbody td:first-child { text-align: center; }
               <th>QLTP</th>
               <th>Siêu Thị</th>
               <th>Ngày BK</th>
-              <th>Giờ (24h)</th>
+              <th>Giờ</th>
               <th>Sản Phẩm</th>
               <th>Nhân Viên</th>
               <th>Ngày Tạo</th>
@@ -685,6 +703,11 @@ tbody td:first-child { text-align: center; }
   </div>
 </div>
 
+<!-- ============================================================
+     MODALS
+     ============================================================ -->
+
+<!-- CREATE / EDIT -->
 <div class="modal-overlay hidden" id="modalCreate">
   <div class="modal modal-lg">
     <div class="modal-header">
@@ -692,6 +715,7 @@ tbody td:first-child { text-align: center; }
       <button class="modal-close" onclick="closeModal('modalCreate')">×</button>
     </div>
     <div class="modal-body">
+      <!-- Siêu thị (single select theo mã) -->
       <div class="form-group">
         <label style="font-weight:700;font-size:12px;color:var(--gray-600);text-transform:uppercase;letter-spacing:.4px;display:block;margin-bottom:5px;">
           Siêu Thị <span style="color:red">*</span>
@@ -707,6 +731,7 @@ tbody td:first-child { text-align: center; }
         <div class="tags-wrap" id="tagsST"></div>
       </div>
 
+      <!-- Ngày + Giờ -->
       <div class="form-row-3">
         <div class="form-group">
           <label style="font-weight:700;font-size:12px;color:var(--gray-600);text-transform:uppercase;letter-spacing:.4px;display:block;margin-bottom:5px;">
@@ -718,16 +743,19 @@ tbody td:first-child { text-align: center; }
           <label style="font-weight:700;font-size:12px;color:var(--gray-600);text-transform:uppercase;letter-spacing:.4px;display:block;margin-bottom:5px;">
             Từ Giờ <small style="font-weight:400;">(05:00–22:00)</small>
           </label>
-          <input type="time" id="inpTuGio" class="form-control" min="05:00" max="22:00" step="900" lang="en-GB">
+          <!-- Đã trả về thẻ time nguyên bản -->
+          <input type="time" id="inpTuGio" class="form-control" min="05:00" max="22:00" step="900">
         </div>
         <div class="form-group">
           <label style="font-weight:700;font-size:12px;color:var(--gray-600);text-transform:uppercase;letter-spacing:.4px;display:block;margin-bottom:5px;">
             Đến Giờ <small style="font-weight:400;">(05:00–22:00)</small>
           </label>
-          <input type="time" id="inpDenGio" class="form-control" min="05:00" max="22:00" step="900" lang="en-GB">
+          <!-- Đã trả về thẻ time nguyên bản -->
+          <input type="time" id="inpDenGio" class="form-control" min="05:00" max="22:00" step="900">
         </div>
       </div>
 
+      <!-- Sản phẩm (multi select theo mã) -->
       <div class="form-group">
         <label style="font-weight:700;font-size:12px;color:var(--gray-600);text-transform:uppercase;letter-spacing:.4px;display:block;margin-bottom:5px;">
           Sản Phẩm <span style="color:red">*</span> — có thể chọn nhiều
@@ -743,6 +771,7 @@ tbody td:first-child { text-align: center; }
         <div class="tags-wrap" id="tagsSP"></div>
       </div>
 
+      <!-- Nhân viên (multi select theo mã) -->
       <div class="form-group">
         <label style="font-weight:700;font-size:12px;color:var(--gray-600);text-transform:uppercase;letter-spacing:.4px;display:block;margin-bottom:5px;">
           Nhân Viên <span style="color:red">*</span> — có thể chọn nhiều
@@ -765,6 +794,7 @@ tbody td:first-child { text-align: center; }
   </div>
 </div>
 
+<!-- DETAIL -->
 <div class="modal-overlay hidden" id="modalDetail">
   <div class="modal modal-lg">
     <div class="modal-header">
@@ -778,6 +808,7 @@ tbody td:first-child { text-align: center; }
   </div>
 </div>
 
+<!-- IMPORT -->
 <div class="modal-overlay hidden" id="modalImport">
   <div class="modal modal-xl">
     <div class="modal-header">
@@ -802,6 +833,7 @@ tbody td:first-child { text-align: center; }
   </div>
 </div>
 
+<!-- MASTER DATA (Admin) -->
 <div class="modal-overlay hidden" id="modalMaster">
   <div class="modal modal-xl">
     <div class="modal-header">
@@ -818,6 +850,7 @@ tbody td:first-child { text-align: center; }
         <button class="tab-btn" onclick="switchTab('pass')">🔑 Đổi Mật Khẩu</button>
       </div>
 
+      <!-- Tab: Import -->
       <div id="tabImport" class="tab-content active">
         <div class="master-card">
           <h4>🏪 File Phân Bổ (QLTP + Siêu Thị)</h4>
@@ -871,6 +904,7 @@ tbody td:first-child { text-align: center; }
         </div>
       </div>
 
+      <!-- Tab: Users (QLTP) -->
       <div id="tabUsers" class="tab-content">
         <div style="display:flex;gap:8px;margin-bottom:10px;flex-wrap:wrap;">
           <input type="text" id="searchUsers" class="form-control" placeholder="🔍 Tìm theo mã..." oninput="renderMasterList('users')" style="flex:1;min-width:160px;">
@@ -881,6 +915,7 @@ tbody td:first-child { text-align: center; }
         <div id="listUsers" style="max-height:380px;overflow-y:auto;"></div>
       </div>
 
+      <!-- Tab: Siêu thị -->
       <div id="tabSieuthi" class="tab-content">
         <div style="display:flex;gap:8px;margin-bottom:10px;flex-wrap:wrap;">
           <input type="text" id="searchST" class="form-control" placeholder="🔍 Tìm theo mã ST..." oninput="renderMasterList('sieuthi')" style="flex:1;min-width:160px;">
@@ -888,6 +923,7 @@ tbody td:first-child { text-align: center; }
         <div id="listSieuthi" style="max-height:380px;overflow-y:auto;"></div>
       </div>
 
+      <!-- Tab: Sản phẩm -->
       <div id="tabSanpham" class="tab-content">
         <div style="display:flex;gap:8px;margin-bottom:10px;flex-wrap:wrap;">
           <input type="text" id="searchSP" class="form-control" placeholder="🔍 Tìm theo mã SP..." oninput="renderMasterList('sanpham')" style="flex:1;min-width:160px;">
@@ -895,6 +931,7 @@ tbody td:first-child { text-align: center; }
         <div id="listSanpham" style="max-height:380px;overflow-y:auto;"></div>
       </div>
 
+      <!-- Tab: Nhân viên -->
       <div id="tabNhanvien" class="tab-content">
         <div style="display:flex;gap:8px;margin-bottom:10px;flex-wrap:wrap;">
           <input type="text" id="searchNV" class="form-control" placeholder="🔍 Tìm theo mã NV..." oninput="renderMasterList('nhanvien')" style="flex:1;min-width:160px;">
@@ -902,6 +939,7 @@ tbody td:first-child { text-align: center; }
         <div id="listNhanvien" style="max-height:380px;overflow-y:auto;"></div>
       </div>
 
+      <!-- Tab: Đổi mật khẩu -->
       <div id="tabPass" class="tab-content">
         <div style="max-width:360px;">
           <div class="form-group">
@@ -922,6 +960,7 @@ tbody td:first-child { text-align: center; }
   </div>
 </div>
 
+<!-- HISTORY -->
 <div class="modal-overlay hidden" id="modalHistory">
   <div class="modal modal-lg">
     <div class="modal-header">
