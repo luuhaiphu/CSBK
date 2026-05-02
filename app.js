@@ -70,49 +70,61 @@ function fDate(iso) {
 function fTime(t) {
   if (!t) return '--';
   const s = String(t).trim();
-  const parts = s.split(':');
-  if (parts.length >= 2) {
-    return String(parts[0]).padStart(2, '0') + ':' + String(parts[1]).padStart(2, '0');
-  }
-  if (/^\d{3,4}$/.test(s)) {
-    const h = s.slice(0, s.length - 2);
-    const m = s.slice(-2);
-    return h.padStart(2, '0') + ':' + m;
-  }
+  const match = s.match(/(\d{2}):(\d{2})/);
+  if (match) return `${match[1]}:${match[2]}`;
   return s;
 }
 
-// Hàm siêu chuẩn hóa: Chấp mọi định dạng ngày trả về từ Google Sheets
+// Bóc tách siêu chuẩn chuỗi ngày Google Sheets
 function normalizeAnyDateToISO(val) {
   if (!val && val !== 0) return '';
   let s = String(val).trim();
   if (!s) return '';
   
-  // 1. Dạng YYYY-MM-DD hoặc ISO
   if (/^\d{4}-\d{2}-\d{2}/.test(s)) return s.substring(0, 10);
-  
-  // 2. Có dấu / (DD/MM/YYYY hoặc YYYY/MM/DD)
   if (s.includes('/')) {
     const p = s.split('/');
     if (p[2] && p[2].length === 4) return `${p[2]}-${p[1].padStart(2,'0')}-${p[0].padStart(2,'0')}`;
     if (p[0] && p[0].length === 4) return `${p[0]}-${p[1].padStart(2,'0')}-${p[2].padStart(2,'0')}`;
   }
-  
-  // 3. Định dạng Serial Number (VD: 46137)
   if (!isNaN(s) && Number(s) > 40000) {
     const ms  = Math.round((Number(s) - 25569) * 86400 * 1000);
     const dt  = new Date(ms);
     const utc = new Date(dt.getTime() + dt.getTimezoneOffset() * 60000);
     return `${utc.getFullYear()}-${String(utc.getMonth()+1).padStart(2,'0')}-${String(utc.getDate()).padStart(2,'0')}`;
   }
-  
-  // 4. Dạng chuỗi JS Native (Sat May 02...)
   const parsed = new Date(s);
   if (!isNaN(parsed.getTime())) {
     return `${parsed.getFullYear()}-${String(parsed.getMonth()+1).padStart(2,'0')}-${String(parsed.getDate()).padStart(2,'0')}`;
   }
-  
-  return s; // Fallback
+  return s; 
+}
+
+// Cắt lấy đúng HH:MM từ đống rác "Sat Dec 30 1899 HH:MM:SS" của Google
+function extractTime(val) {
+  if (!val) return '';
+  const s = String(val).trim();
+  const m = s.match(/(\d{2}):(\d{2})/);
+  if (m) return `${m[1]}:${m[2]}`;
+  return s;
+}
+
+// Chuyển chuỗi mã (mã1; mã2) tải từ Google Sheets thành Array Object cho giao diện
+function parseList(raw, masterArray) {
+  if (!raw) return [];
+  const s = String(raw).trim();
+  if (!s) return [];
+  // Tương thích ngược nếu Sheets vẫn còn data kiểu JSON cũ
+  if (s.startsWith('[')) {
+    try { return JSON.parse(s); } catch(e) { return []; }
+  }
+  // Data mới chuẩn (cách nhau bởi ;)
+  return s.split(';').map(code => {
+    const cleanCode = code.trim();
+    if (!cleanCode) return null;
+    const found = masterArray.find(item => String(item.code) === cleanCode);
+    return { code: cleanCode, name: found ? found.name : 'Không rõ tên' };
+  }).filter(Boolean);
 }
 
 function genId() {
@@ -271,20 +283,18 @@ async function loadAllData() {
   masterData.nhanvien  = d.nhanvien  || [];
   
   declarations = (d.declarations || []).filter(x => x.rowStatus !== 'deleted').map(x => {
-    // Ép kiểu tuyệt đối Mã (String)
     x.authorCode = String(x.authorCode || '').trim();
     x.sieuthiCode = String(x.sieuthiCode || '').trim();
 
-    // Parse JSON
-    if (typeof x.sanphamList === 'string') {
-      try { x.sanphamList = JSON.parse(x.sanphamList); } catch(e) { x.sanphamList = []; }
-    }
-    if (typeof x.nhanvienList === 'string') {
-      try { x.nhanvienList = JSON.parse(x.nhanvienList); } catch(e) { x.nhanvienList = []; }
-    }
+    // ── XỬ LÝ LỖI TRƯỚC ĐÓ ──
+    x.ngay = normalizeAnyDateToISO(x.ngay);     // Ngày
+    x.tuGio = extractTime(x.tuGio);             // Giờ bóc tách 1899
+    x.denGio = extractTime(x.denGio);
     
-    // Chuẩn hóa mọi định dạng ngày do Sheets trả về
-    x.ngay = normalizeAnyDateToISO(x.ngay);
+    // Tải mảng từ chuỗi "mã1;mã2"
+    x.sanphamList = parseList(x.sanphamList, masterData.sanpham);
+    x.nhanvienList = parseList(x.nhanvienList, masterData.nhanvien);
+    
     return x;
   });
 
@@ -332,9 +342,6 @@ function setupUI() {
   document.getElementById('btnCreate').style.display  = (isQL || isAdmin) ? '' : 'none';
   document.getElementById('btnImport').style.display  = (isQL || isAdmin) ? '' : 'none';
 
-  // FIX BUG: XÓA GIÁ TRỊ MẶC ĐỊNH CHO TỪ NGÀY - ĐẾN NGÀY.
-  // Lúc đăng nhập, 2 ô này trống hoàn toàn -> Hiển thị TẤT CẢ các data.
-  // Người dùng muốn lọc từ ngày nào đến ngày nào thì tự click chọn.
   document.getElementById('fltFrom').value = '';
   document.getElementById('fltTo').value   = '';
 }
@@ -370,13 +377,9 @@ function applyFilter() {
   const fTo   = document.getElementById('fltTo').value;
 
   filteredDecls = declarations.filter(d => {
-    // Lọc tìm được bằng cả MÃ lẫn TÊN Siêu Thị
     if (fST && !String(d.sieuthiCode).toUpperCase().includes(fST) && !String(d.sieuthiName).toUpperCase().includes(fST)) return false;
-    
-    // Lọc theo khoảng thời gian nếu người dùng có chọn
     if (fFrom && d.ngay < fFrom) return false;
     if (fTo   && d.ngay > fTo)   return false;
-    
     return true;
   });
 
@@ -596,6 +599,8 @@ function openEdit(id) {
   document.getElementById('inpSP').value    = '';
   document.getElementById('inpNV').value    = '';
   document.getElementById('inpNgay').value  = d.ngay;
+  
+  // Do sử dụng thẻ select tĩnh, gán đúng value để UI update
   document.getElementById('inpTuGio').value = d.tuGio  || '';
   document.getElementById('inpDenGio').value= d.denGio || '';
 
@@ -619,13 +624,12 @@ async function submitCreate() {
   if (!ngay) return toast('error', 'Chọn Ngày!');
   if (!tuGio || !denGio) return toast('error', 'Nhập đủ Từ giờ và Đến giờ!');
 
-  if (tuGio < '05:00' || tuGio > '22:00' || denGio < '05:00' || denGio > '22:00')
-    return toast('error', 'Giờ phải trong khoảng 05:00 – 22:00!');
   if (tuGio >= denGio) return toast('error', 'Từ giờ phải nhỏ hơn Đến giờ!');
 
   const isEdit = !!editingId;
   const id = editingId || genId();
 
+  // ── FIX BUG LƯU DATA NHẸ CỘT SP/NV ──
   const payload = {
     id,
     authorCode:   currentUser.code,
@@ -635,8 +639,8 @@ async function submitCreate() {
     ngay,
     tuGio,
     denGio,
-    sanphamList:  JSON.stringify(selSP),
-    nhanvienList: JSON.stringify(selNV),
+    sanphamList:  selSP.map(x => x.code).join(';'), // Chỉ nối mã bằng ;
+    nhanvienList: selNV.map(x => x.code).join(';'), // Chỉ nối mã bằng ;
     rowStatus:    'active',
     createdAt:    isEdit ? (declarations.find(x=>x.id===id)?.createdAt || nowISO()) : nowISO(),
     updatedAt:    nowISO()
@@ -650,7 +654,7 @@ async function submitCreate() {
 
     const localObj = {
       ...payload,
-      sanphamList:  selSP,
+      sanphamList:  selSP, // UI cục bộ vẫn cần mảng Array
       nhanvienList: selNV
     };
     if (isEdit) {
@@ -952,8 +956,7 @@ function parseImport(rawRows) {
 
     const timeRgx = /^\d{2}:\d{2}$/;
     if (!timeRgx.test(tuGio) || !timeRgx.test(denGio)) errs.push('Giờ phải định dạng HH:MM');
-    else if (tuGio < '05:00' || denGio > '22:00') errs.push('Giờ ngoài 05:00–22:00');
-    else if (tuGio >= denGio) errs.push('Từ giờ ≥ Đến giờ');
+    else if (tuGio >= denGio && tuGio !== '24:00') errs.push('Từ giờ ≥ Đến giờ');
 
     const sanphamList = [];
     spCodes.forEach(code => {
@@ -1009,8 +1012,9 @@ async function doImport() {
       ngay:          r.ngay,
       tuGio:         r.tuGio,
       denGio:        r.denGio,
-      sanphamList:   JSON.stringify(r.sanphamList),
-      nhanvienList:  JSON.stringify(r.nhanvienList),
+      // Khi Import cũng chỉ nối các mã lại bằng dấu ;
+      sanphamList:   r.sanphamList.map(x => x.code).join(';'),
+      nhanvienList:  r.nhanvienList.map(x => x.code).join(';'),
       rowStatus:     'active',
       createdAt:     nowISO(),
       updatedAt:     nowISO()
