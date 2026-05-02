@@ -10,7 +10,7 @@
 // ============================================================
 
 // --- Apps Script URL (lưu vào localStorage chỉ để admin không cần nhập lại) ---
-let WEB_APP_URL = localStorage.getItem('bhx_webAppUrl') || '';
+let WEB_APP_URL = 'https://script.google.com/macros/s/AKfycbz_THAY_BANG_LINK_CUA_BAN_O_DAY/exec';
 
 // --- Mật khẩu admin (lưu local, admin có thể đổi) ---
 const ADMIN_PASS_KEY = 'bhx_adminPass';
