@@ -82,21 +82,37 @@ function fTime(t) {
   return s;
 }
 
-function normalizeTime(raw) {
-  const s = String(raw || '').trim();
+// Hàm siêu chuẩn hóa: Chấp mọi định dạng ngày trả về từ Google Sheets
+function normalizeAnyDateToISO(val) {
+  if (!val && val !== 0) return '';
+  let s = String(val).trim();
   if (!s) return '';
-  if (/^\d{2}:\d{2}$/.test(s)) return s;
-  if (/^\d{1,2}:\d{1,2}$/.test(s)) {
-    const [h, m] = s.split(':');
-    return h.padStart(2, '0') + ':' + m.padStart(2, '0');
+  
+  // 1. Dạng YYYY-MM-DD hoặc ISO
+  if (/^\d{4}-\d{2}-\d{2}/.test(s)) return s.substring(0, 10);
+  
+  // 2. Có dấu / (DD/MM/YYYY hoặc YYYY/MM/DD)
+  if (s.includes('/')) {
+    const p = s.split('/');
+    if (p[2] && p[2].length === 4) return `${p[2]}-${p[1].padStart(2,'0')}-${p[0].padStart(2,'0')}`;
+    if (p[0] && p[0].length === 4) return `${p[0]}-${p[1].padStart(2,'0')}-${p[2].padStart(2,'0')}`;
   }
-  if (!isNaN(s) && s !== '') {
-    const totalMin = Math.round(parseFloat(s) * 24 * 60);
-    const h = Math.floor(totalMin / 60);
-    const m = totalMin % 60;
-    return String(h).padStart(2, '0') + ':' + String(m).padStart(2, '0');
+  
+  // 3. Định dạng Serial Number (VD: 46137)
+  if (!isNaN(s) && Number(s) > 40000) {
+    const ms  = Math.round((Number(s) - 25569) * 86400 * 1000);
+    const dt  = new Date(ms);
+    const utc = new Date(dt.getTime() + dt.getTimezoneOffset() * 60000);
+    return `${utc.getFullYear()}-${String(utc.getMonth()+1).padStart(2,'0')}-${String(utc.getDate()).padStart(2,'0')}`;
   }
-  return s;
+  
+  // 4. Dạng chuỗi JS Native (Sat May 02...)
+  const parsed = new Date(s);
+  if (!isNaN(parsed.getTime())) {
+    return `${parsed.getFullYear()}-${String(parsed.getMonth()+1).padStart(2,'0')}-${String(parsed.getDate()).padStart(2,'0')}`;
+  }
+  
+  return s; // Fallback
 }
 
 function genId() {
@@ -212,7 +228,6 @@ async function doLogin() {
       errEl.style.display = '';
       return;
     }
-    // Ép kiểu chuỗi ngay từ lúc đăng nhập
     currentUser = { code: String(r.data.code).trim(), name: r.data.name, role: 'qltp' }; 
     await afterLogin();
   } catch (err) {
@@ -255,13 +270,12 @@ async function loadAllData() {
   masterData.sanpham   = d.sanpham   || [];
   masterData.nhanvien  = d.nhanvien  || [];
   
-  // ── FIX BUG 1: Bộ chuẩn hóa siêu cường, ép kiểu và lật ngược ngày ──
   declarations = (d.declarations || []).filter(x => x.rowStatus !== 'deleted').map(x => {
-    // 1. Ép kiểu tuyệt đối Mã (String) để tránh sai lệch dữ liệu Sheets (Number) và Web (String)
+    // Ép kiểu tuyệt đối Mã (String)
     x.authorCode = String(x.authorCode || '').trim();
     x.sieuthiCode = String(x.sieuthiCode || '').trim();
 
-    // 2. Parse lại chuỗi mảng JSON nếu có
+    // Parse JSON
     if (typeof x.sanphamList === 'string') {
       try { x.sanphamList = JSON.parse(x.sanphamList); } catch(e) { x.sanphamList = []; }
     }
@@ -269,30 +283,13 @@ async function loadAllData() {
       try { x.nhanvienList = JSON.parse(x.nhanvienList); } catch(e) { x.nhanvienList = []; }
     }
     
-    // 3. Tự nhận diện và lật ngược ngày tháng nếu Sheets trả về DD/MM/YYYY
-    if (x.ngay) {
-      let s = String(x.ngay).trim();
-      if (s.includes('T')) {
-        s = s.split('T')[0];
-      } else if (s.includes('/')) {
-        const p = s.split('/');
-        // Nhận diện DD/MM/YYYY
-        if (p[2] && p[2].length === 4) {
-          s = `${p[2]}-${p[1].padStart(2,'0')}-${p[0].padStart(2,'0')}`;
-        }
-        // Nhận diện YYYY/MM/DD
-        else if (p[0] && p[0].length === 4) {
-          s = `${p[0]}-${p[1].padStart(2,'0')}-${p[2].padStart(2,'0')}`;
-        }
-      }
-      x.ngay = s;
-    }
+    // Chuẩn hóa mọi định dạng ngày do Sheets trả về
+    x.ngay = normalizeAnyDateToISO(x.ngay);
     return x;
   });
 
   activityLog = d.activityLog || [];
 
-  // Lọc lấy đúng đơn của QLTP, sử dụng so sánh chuỗi (String) tuyệt đối
   if (currentUser.role === 'qltp') {
     const myCode = String(currentUser.code).trim();
     declarations = declarations.filter(x => x.authorCode === myCode);
@@ -335,11 +332,11 @@ function setupUI() {
   document.getElementById('btnCreate').style.display  = (isQL || isAdmin) ? '' : 'none';
   document.getElementById('btnImport').style.display  = (isQL || isAdmin) ? '' : 'none';
 
-  const d_now = new Date();
-  const today = d_now.getFullYear() + '-' + String(d_now.getMonth()+1).padStart(2,'0') + '-' + String(d_now.getDate()).padStart(2,'0');
-  
-  document.getElementById('fltFrom').value = today;
-  document.getElementById('fltTo').value   = today;
+  // FIX BUG: XÓA GIÁ TRỊ MẶC ĐỊNH CHO TỪ NGÀY - ĐẾN NGÀY.
+  // Lúc đăng nhập, 2 ô này trống hoàn toàn -> Hiển thị TẤT CẢ các data.
+  // Người dùng muốn lọc từ ngày nào đến ngày nào thì tự click chọn.
+  document.getElementById('fltFrom').value = '';
+  document.getElementById('fltTo').value   = '';
 }
 
 function onHeaderUserClick() {
@@ -373,10 +370,13 @@ function applyFilter() {
   const fTo   = document.getElementById('fltTo').value;
 
   filteredDecls = declarations.filter(d => {
-    // So sánh filter mã cũng phải ép sang String
-    if (fST && !String(d.sieuthiCode).toUpperCase().includes(fST)) return false;
+    // Lọc tìm được bằng cả MÃ lẫn TÊN Siêu Thị
+    if (fST && !String(d.sieuthiCode).toUpperCase().includes(fST) && !String(d.sieuthiName).toUpperCase().includes(fST)) return false;
+    
+    // Lọc theo khoảng thời gian nếu người dùng có chọn
     if (fFrom && d.ngay < fFrom) return false;
     if (fTo   && d.ngay > fTo)   return false;
+    
     return true;
   });
 
