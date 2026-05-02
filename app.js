@@ -10,7 +10,7 @@
 // ============================================================
 
 // --- Apps Script URL (Gắn cố định, không cần cấu hình UI nữa) ---
-const WEB_APP_URL = 'https://script.google.com/macros/s/AKfycbz_THAY_BANG_LINK_CUA_BAN_O_DAY/exec';
+const WEB_APP_URL = 'https://script.google.com/macros/s/AKfycbygKshGGyUOHv4ukq_smcoYYgMJee4Ja3R9fchJB97w7DudIllGVffjWWYo5VL3p1Y_cg/exec';
 
 // --- Mật khẩu admin (lưu local, admin có thể đổi) ---
 const ADMIN_PASS_KEY = 'bhx_adminPass';
