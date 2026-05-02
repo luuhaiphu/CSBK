@@ -267,7 +267,19 @@ async function loadAllData() {
   masterData.sieuthi   = d.sieuthi   || [];
   masterData.sanpham   = d.sanpham   || [];
   masterData.nhanvien  = d.nhanvien  || [];
-  declarations         = (d.declarations || []).filter(x => x.rowStatus !== 'deleted');
+  
+  // FIX BUG 1: Parse lại chuỗi JSON thành mảng và chuẩn hóa ngày
+  declarations = (d.declarations || []).filter(x => x.rowStatus !== 'deleted').map(x => {
+    if (typeof x.sanphamList === 'string') {
+      try { x.sanphamList = JSON.parse(x.sanphamList); } catch(e) { x.sanphamList = []; }
+    }
+    if (typeof x.nhanvienList === 'string') {
+      try { x.nhanvienList = JSON.parse(x.nhanvienList); } catch(e) { x.nhanvienList = []; }
+    }
+    if (x.ngay && x.ngay.includes('T')) x.ngay = x.ngay.split('T')[0];
+    return x;
+  });
+
   activityLog          = d.activityLog || [];
 
   if (currentUser.role === 'qltp') {
@@ -311,7 +323,10 @@ function setupUI() {
   document.getElementById('btnCreate').style.display  = (isQL || isAdmin) ? '' : 'none';
   document.getElementById('btnImport').style.display  = (isQL || isAdmin) ? '' : 'none';
 
-  const today = new Date().toISOString().split('T')[0];
+  // FIX BUG 1: Lấy ngày hiện tại theo múi giờ địa phương thay vì ISO (UTC)
+  const d_now = new Date();
+  const today = d_now.getFullYear() + '-' + String(d_now.getMonth()+1).padStart(2,'0') + '-' + String(d_now.getDate()).padStart(2,'0');
+  
   document.getElementById('fltFrom').value = today;
   document.getElementById('fltTo').value   = today;
 }
