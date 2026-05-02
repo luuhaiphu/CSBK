@@ -73,7 +73,6 @@ function fDate(iso) {
   return `${d}/${m}/${y}`;
 }
 
-// ── FIX #2: Chuẩn hóa hiển thị giờ HH:MM ───────────
 function fTime(t) {
   if (!t) return '--';
   const s = String(t).trim();
@@ -89,7 +88,6 @@ function fTime(t) {
   return s;
 }
 
-// ── FIX #3 Helper: Chuẩn hóa giờ khi import Excel ───
 function normalizeTime(raw) {
   const s = String(raw || '').trim();
   if (!s) return '';
@@ -126,7 +124,7 @@ async function gasGet(params) {
   const qs = new URLSearchParams(params).toString();
   const res = await fetch(`${WEB_APP_URL}?${qs}`, {
     redirect: 'follow',
-    credentials: 'omit'   // ← thêm dòng này
+    credentials: 'omit'
   });
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
   return await res.json();
@@ -136,7 +134,7 @@ async function gasPost(payload) {
   const res = await fetch(WEB_APP_URL, {
     method: 'POST',
     redirect: 'follow',
-    credentials: 'omit',   // ← thêm dòng này
+    credentials: 'omit',
     headers: { 'Content-Type': 'text/plain' },
     body: JSON.stringify(payload)
   });
@@ -311,9 +309,10 @@ function setupUI() {
   document.getElementById('btnCreate').style.display  = (isQL || isAdmin) ? '' : 'none';
   document.getElementById('btnImport').style.display  = (isQL || isAdmin) ? '' : 'none';
 
-  const today = new Date().toISOString().split('T')[0];
-  document.getElementById('fltFrom').value = today;
-  document.getElementById('fltTo').value   = today;
+  // ── FIX BUG 1: Không set ngày mặc định để tránh lọc mất phiếu import ──
+  // Để trống filter ngày → hiển thị toàn bộ dữ liệu
+  document.getElementById('fltFrom').value = '';
+  document.getElementById('fltTo').value   = '';
 }
 
 function onHeaderUserClick() {
@@ -534,7 +533,149 @@ document.addEventListener('click', e => {
     if (el && !el.parentElement?.contains(e.target)) el.classList.add('hidden');
   });
   document.getElementById('qltpSuggest')?.classList.add('hidden');
+  // Close time dropdowns
+  ['tuGioWrap','denGioWrap'].forEach(wid => {
+    const w = document.getElementById(wid);
+    if (w && !w.contains(e.target)) {
+      const dd = w.querySelector('.time-dropdown');
+      if (dd) dd.classList.add('hidden');
+    }
+  });
 });
+
+// ============================================================
+// 8B. CUSTOM 24H TIME PICKER
+// ============================================================
+
+/**
+ * Tạo custom time picker 24h (thay thế <input type="time"> bị AM/PM trên một số browser).
+ * Gọi initTimePickers() sau khi DOM ready.
+ */
+function buildTimePicker(wrapperId, hiddenId) {
+  const wrap = document.getElementById(wrapperId);
+  if (!wrap) return;
+
+  const hours   = Array.from({length: 18}, (_, i) => String(i + 5).padStart(2, '0'));  // 05–22
+  const minutes = ['00', '15', '30', '45'];
+
+  wrap.innerHTML = `
+    <div class="time-display" id="${hiddenId}_display"
+      onclick="toggleTimeDrop('${wrapperId}')"
+      style="
+        display:flex;align-items:center;gap:6px;
+        border:1.5px solid var(--border);border-radius:4px;
+        padding:9px 12px;cursor:pointer;user-select:none;
+        font-size:13px;font-weight:600;background:#fff;
+        transition:border-color .2s;
+      ">
+      <span id="${hiddenId}_val" style="flex:1;color:var(--gray-400);">--:--</span>
+      <span style="color:var(--gray-400);font-size:11px;">▼</span>
+    </div>
+    <div class="time-dropdown hidden" id="${hiddenId}_drop"
+      style="
+        position:absolute;z-index:4000;
+        background:#fff;border:1.5px solid var(--green);
+        border-radius:6px;box-shadow:0 4px 16px rgba(0,0,0,.15);
+        display:flex;overflow:hidden;margin-top:2px;
+      ">
+      <div style="display:flex;flex-direction:column;border-right:1px solid var(--gray-200);">
+        <div style="padding:6px 10px;font-size:10px;font-weight:700;color:var(--gray-600);text-align:center;background:var(--gray-50);">GIỜ</div>
+        <div style="overflow-y:auto;max-height:180px;" id="${hiddenId}_hlist">
+          ${hours.map(h => `<div class="tp-item" data-h="${h}" onclick="selectTimeH('${hiddenId}','${h}')"
+            style="padding:7px 16px;cursor:pointer;font-size:13px;font-weight:600;text-align:center;transition:background .1s;"
+            onmouseover="this.style.background='var(--green-light)'" onmouseout="this.style.background=''">${h}</div>`).join('')}
+        </div>
+      </div>
+      <div style="display:flex;flex-direction:column;">
+        <div style="padding:6px 10px;font-size:10px;font-weight:700;color:var(--gray-600);text-align:center;background:var(--gray-50);">PHÚT</div>
+        <div id="${hiddenId}_mlist">
+          ${minutes.map(m => `<div class="tp-item" data-m="${m}" onclick="selectTimeM('${hiddenId}','${m}')"
+            style="padding:7px 16px;cursor:pointer;font-size:13px;font-weight:600;text-align:center;transition:background .1s;"
+            onmouseover="this.style.background='var(--green-light)'" onmouseout="this.style.background=''">${m}</div>`).join('')}
+        </div>
+      </div>
+    </div>
+    <input type="hidden" id="${hiddenId}" value="">
+  `;
+  wrap.style.position = 'relative';
+}
+
+function toggleTimeDrop(wrapperId) {
+  const wrap = document.getElementById(wrapperId);
+  const dd = wrap.querySelector('.time-dropdown');
+  const isHidden = dd.classList.contains('hidden');
+  // Close all others
+  document.querySelectorAll('.time-dropdown').forEach(d => d.classList.add('hidden'));
+  if (isHidden) dd.classList.remove('hidden');
+}
+
+// Track partial selection per picker
+const _tpState = {};
+
+function selectTimeH(hiddenId, h) {
+  _tpState[hiddenId] = _tpState[hiddenId] || {};
+  _tpState[hiddenId].h = h;
+  // Highlight
+  document.querySelectorAll(`#${hiddenId}_hlist .tp-item`).forEach(el => {
+    el.style.background = el.dataset.h === h ? 'var(--green)' : '';
+    el.style.color = el.dataset.h === h ? '#fff' : '';
+  });
+  _tpFinalize(hiddenId);
+}
+
+function selectTimeM(hiddenId, m) {
+  _tpState[hiddenId] = _tpState[hiddenId] || {};
+  _tpState[hiddenId].m = m;
+  // Highlight
+  document.querySelectorAll(`#${hiddenId}_mlist .tp-item`).forEach(el => {
+    el.style.background = el.dataset.m === m ? 'var(--green)' : '';
+    el.style.color = el.dataset.m === m ? '#fff' : '';
+  });
+  _tpFinalize(hiddenId);
+}
+
+function _tpFinalize(hiddenId) {
+  const st = _tpState[hiddenId] || {};
+  if (st.h && st.m) {
+    const val = `${st.h}:${st.m}`;
+    document.getElementById(hiddenId).value = val;
+    const disp = document.getElementById(`${hiddenId}_val`);
+    if (disp) { disp.textContent = val; disp.style.color = 'var(--text)'; }
+    // Close dropdown
+    const drop = document.getElementById(`${hiddenId}_drop`);
+    if (drop) drop.classList.add('hidden');
+  }
+}
+
+function setTimePicker(hiddenId, val) {
+  // val = "HH:MM" or ""
+  if (!val) {
+    _tpState[hiddenId] = {};
+    const hidden = document.getElementById(hiddenId);
+    if (hidden) hidden.value = '';
+    const disp = document.getElementById(`${hiddenId}_val`);
+    if (disp) { disp.textContent = '--:--'; disp.style.color = 'var(--gray-400)'; }
+    return;
+  }
+  const [h, m] = val.split(':');
+  _tpState[hiddenId] = { h, m };
+  const hidden = document.getElementById(hiddenId);
+  if (hidden) hidden.value = val;
+  const disp = document.getElementById(`${hiddenId}_val`);
+  if (disp) { disp.textContent = val; disp.style.color = 'var(--text)'; }
+}
+
+function getTimePicker(hiddenId) {
+  const el = document.getElementById(hiddenId);
+  return el ? el.value : '';
+}
+
+function initTimePickers() {
+  buildTimePicker('tuGioWrap', 'inpTuGio');
+  buildTimePicker('denGioWrap', 'inpDenGio');
+}
+
+document.addEventListener('DOMContentLoaded', initTimePickers);
 
 // ============================================================
 // 9. TẠO / SỬA KHAI BÁO
@@ -547,8 +688,8 @@ function openCreateModal() {
   document.getElementById('inpSP').value    = '';
   document.getElementById('inpNV').value    = '';
   document.getElementById('inpNgay').value  = '';
-  document.getElementById('inpTuGio').value = '';
-  document.getElementById('inpDenGio').value= '';
+  setTimePicker('inpTuGio', '');
+  setTimePicker('inpDenGio', '');
   document.getElementById('tagsST').innerHTML = '';
   document.getElementById('tagsSP').innerHTML = '';
   document.getElementById('tagsNV').innerHTML = '';
@@ -569,8 +710,8 @@ function openEdit(id) {
   document.getElementById('inpSP').value    = '';
   document.getElementById('inpNV').value    = '';
   document.getElementById('inpNgay').value  = d.ngay;
-  document.getElementById('inpTuGio').value = d.tuGio  || '';
-  document.getElementById('inpDenGio').value= d.denGio || '';
+  setTimePicker('inpTuGio',  fTime(d.tuGio  || ''));
+  setTimePicker('inpDenGio', fTime(d.denGio || ''));
 
   renderTags('st');
   renderTags('sp');
@@ -584,11 +725,11 @@ async function submitCreate() {
   if (!selST)            return toast('error', 'Chọn Siêu Thị!');
   if (!selSP.length)     return toast('error', 'Chọn ít nhất 1 Sản Phẩm!');
   if (!selNV.length)     return toast('error', 'Chọn ít nhất 1 Nhân Viên!');
-  const ngay  = document.getElementById('inpNgay').value;
-  const tuGio = document.getElementById('inpTuGio').value;
-  const denGio= document.getElementById('inpDenGio').value;
+  const ngay   = document.getElementById('inpNgay').value;
+  const tuGio  = getTimePicker('inpTuGio');
+  const denGio = getTimePicker('inpDenGio');
   if (!ngay)  return toast('error', 'Chọn Ngày!');
-  if (!tuGio || !denGio) return toast('error', 'Nhập đủ Từ giờ và Đến giờ!');
+  if (!tuGio || !denGio) return toast('error', 'Chọn đủ Từ giờ và Đến giờ!');
   if (tuGio < '05:00' || tuGio > '22:00' || denGio < '05:00' || denGio > '22:00')
     return toast('error', 'Giờ phải trong khoảng 05:00 – 22:00!');
   if (tuGio >= denGio) return toast('error', 'Từ giờ phải nhỏ hơn Đến giờ!');
@@ -833,7 +974,6 @@ function openImportModal() {
   showModal('modalImport');
 }
 
-// ── SỬA #1: Thêm cellDates:true để SheetJS tự convert date serial → JS Date ──
 function onFileImport(e) {
   const file = e.target.files[0]; if (!file) return;
   const reader = new FileReader();
@@ -845,12 +985,8 @@ function onFileImport(e) {
   reader.readAsArrayBuffer(file);
 }
 
-// ── SỬA #2: 3 helper xử lý định dạng Excel ──────────────────────────────────
-
-// Convert Excel date (JS Date từ cellDates, serial number, hoặc DD/MM/YYYY) → YYYY-MM-DD
 function excelDateToISO(val) {
   if (!val && val !== 0) return '';
-  // cellDates:true → JS Date object
   if (val instanceof Date) {
     const y = val.getFullYear();
     const m = String(val.getMonth() + 1).padStart(2, '0');
@@ -859,14 +995,12 @@ function excelDateToISO(val) {
   }
   const s = String(val).trim();
   if (!s) return '';
-  // DD/MM/YYYY hoặc YYYY/MM/DD
   if (s.includes('/')) {
     const parts = s.split('/');
     return parts[0].length === 4
       ? `${parts[0]}-${parts[1].padStart(2,'0')}-${parts[2].padStart(2,'0')}`
       : `${parts[2]}-${parts[1].padStart(2,'0')}-${parts[0].padStart(2,'0')}`;
   }
-  // Excel serial number dạng số (46137...)
   if (!isNaN(s) && Number(s) > 40000) {
     const ms  = Math.round((Number(s) - 25569) * 86400 * 1000);
     const dt  = new Date(ms);
@@ -876,20 +1010,16 @@ function excelDateToISO(val) {
   return s;
 }
 
-// Convert Excel time (fraction 0-1, "8h30", "H:MM", "HH:MM") → HH:MM
 function excelTimeToHHMM(val) {
   if (val === '' || val === null || val === undefined) return '';
-  // cellDates:true có thể trả về Date object cho ô time
   if (val instanceof Date) {
     return String(val.getHours()).padStart(2,'0') + ':' + String(val.getMinutes()).padStart(2,'0');
   }
   const s = String(val).trim();
   if (/^\d{2}:\d{2}$/.test(s)) return s;
   if (/^\d{1}:\d{2}$/.test(s)) return '0' + s;
-  // Dạng "8h30" hoặc "08h30"
   const hStyle = s.match(/^(\d{1,2})[hH](\d{2})$/);
   if (hStyle) return String(hStyle[1]).padStart(2,'0') + ':' + hStyle[2];
-  // Fraction 0-1 (Excel lưu giờ dạng thập phân)
   if (!isNaN(s) && s !== '') {
     const f = parseFloat(s);
     if (f >= 0 && f < 2) {
@@ -900,29 +1030,24 @@ function excelTimeToHHMM(val) {
   return s;
 }
 
-// Chuẩn hóa mã: bỏ .0, xử lý scientific notation (8.93E12 → "8934868100850")
 function cleanCode(val) {
   if (val === '' || val === null || val === undefined) return '';
   const s = String(val).trim();
   if (!s) return '';
-  // Scientific notation hoặc float
   const n = parseFloat(s);
   if (!isNaN(n) && isFinite(n)) return String(Math.round(n));
   return s;
 }
 
-// ── SỬA #3: parseImport dùng các helper mới ──────────────────────────────────
 function parseImport(rawRows) {
   importRows = [];
   let html = '';
   let okCount = 0, errCount = 0;
 
   rawRows.forEach((r, i) => {
-    // Dùng helper thay cho String().trim() thô
     const stCode = cleanCode(r[0]);
     const tuGio  = excelTimeToHHMM(r[2]);
     const denGio = excelTimeToHHMM(r[3]);
-    // Chấp nhận cả ";" và "," làm dấu phân cách mã SP/NV
     const spCodes = String(r[4] || '').split(/[;,]/).map(x => cleanCode(x)).filter(Boolean);
     const nvCodes = String(r[5] || '').split(/[;,]/).map(x => cleanCode(x)).filter(Boolean);
 
@@ -933,7 +1058,6 @@ function parseImport(rawRows) {
     if (stObj && currentUser.role === 'qltp' && stObj.qltpCode !== currentUser.code)
       errs.push('ST ngoài phạm vi QLTP');
 
-    // Convert ngày bằng helper (xử lý JS Date, serial, DD/MM/YYYY)
     const ngay = excelDateToISO(r[1]);
     if (!ngay || ngay.length < 8) errs.push('Sai định dạng ngày');
 
@@ -965,7 +1089,6 @@ function parseImport(rawRows) {
       importRows.push({ stCode, stName: stObj.name, ngay, tuGio, denGio, sanphamList, nhanvienList });
     }
 
-    // Hiển thị dateRaw thân thiện trong preview
     const dateDisplay = ngay && ngay.length >= 8
       ? ngay.split('-').reverse().join('/')
       : String(r[1] || '');
