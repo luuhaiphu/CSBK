@@ -9,30 +9,24 @@
 // 1. CẤU HÌNH & TRẠNG THÁI TOÀN CỤC
 // ============================================================
 
-// --- Apps Script URL (Gắn cố định, không cần cấu hình UI nữa) ---
 const WEB_APP_URL = 'https://script.google.com/macros/s/AKfycbygKshGGyUOHv4ukq_smcoYYgMJee4Ja3R9fchJB97w7DudIllGVffjWWYo5VL3p1Y_cg/exec';
 
-// --- Mật khẩu admin (lưu local, admin có thể đổi) ---
 const ADMIN_PASS_KEY = 'bhx_adminPass';
 function getAdminPass() { return localStorage.getItem(ADMIN_PASS_KEY) || '24122004'; }
 function setAdminPass(p) { localStorage.setItem(ADMIN_PASS_KEY, p); }
 
-// --- State ---
-let currentUser   = null;  // { code, name, role: 'qltp'|'admin' }
+let currentUser   = null; 
 let masterData    = { qltpList: [], sieuthi: [], sanpham: [], nhanvien: [] };
-let declarations  = [];    // Array of declaration objects (active only for display)
-let activityLog   = [];    // Loaded from Sheets (sheet: activity_log)
+let declarations  = [];    
+let activityLog   = [];    
 let filteredDecls = [];
 let selectedIds   = new Set();
 
-// Form selections state
-let selST = null;          // { code, name }
-let selSP = [];            // [{ code, name }]
-let selNV = [];            // [{ code, name }]
-let editingId = null;      // null = create, string = edit
-
-// Import state
-let importRows = [];       // Parsed, validated rows ready to submit
+let selST = null;          
+let selSP = [];            
+let selNV = [];            
+let editingId = null;      
+let importRows = [];       
 
 // ============================================================
 // 2. TIỆN ÍCH
@@ -73,7 +67,6 @@ function fDate(iso) {
   return `${d}/${m}/${y}`;
 }
 
-// ── FIX #2: Chuẩn hóa hiển thị giờ HH:MM ───────────
 function fTime(t) {
   if (!t) return '--';
   const s = String(t).trim();
@@ -89,7 +82,6 @@ function fTime(t) {
   return s;
 }
 
-// ── FIX #3 Helper: Chuẩn hóa giờ khi import Excel ───
 function normalizeTime(raw) {
   const s = String(raw || '').trim();
   if (!s) return '';
@@ -124,19 +116,14 @@ function debounce(fn, ms) {
 
 async function gasGet(params) {
   const qs = new URLSearchParams(params).toString();
-  const res = await fetch(`${WEB_APP_URL}?${qs}`, {
-    redirect: 'follow',
-    credentials: 'omit'   // ← thêm dòng này
-  });
+  const res = await fetch(`${WEB_APP_URL}?${qs}`, { redirect: 'follow', credentials: 'omit' });
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
   return await res.json();
 }
 
 async function gasPost(payload) {
   const res = await fetch(WEB_APP_URL, {
-    method: 'POST',
-    redirect: 'follow',
-    credentials: 'omit',   // ← thêm dòng này
+    method: 'POST', redirect: 'follow', credentials: 'omit',
     headers: { 'Content-Type': 'text/plain' },
     body: JSON.stringify(payload)
   });
@@ -213,7 +200,6 @@ async function doLogin() {
     return;
   }
 
-  // QLTP
   const code = document.getElementById('inpQLTPCode').value.trim();
   if (!code) { errEl.textContent = '❌ Vui lòng nhập mã QLTP!'; errEl.style.display = ''; return; }
 
@@ -226,7 +212,8 @@ async function doLogin() {
       errEl.style.display = '';
       return;
     }
-    currentUser = { code: r.data.code, name: r.data.name, role: 'qltp' };
+    // Ép kiểu chuỗi ngay từ lúc đăng nhập
+    currentUser = { code: String(r.data.code).trim(), name: r.data.name, role: 'qltp' }; 
     await afterLogin();
   } catch (err) {
     hideLoading();
@@ -268,22 +255,47 @@ async function loadAllData() {
   masterData.sanpham   = d.sanpham   || [];
   masterData.nhanvien  = d.nhanvien  || [];
   
-  // FIX BUG 1: Parse lại chuỗi JSON thành mảng và chuẩn hóa ngày
+  // ── FIX BUG 1: Bộ chuẩn hóa siêu cường, ép kiểu và lật ngược ngày ──
   declarations = (d.declarations || []).filter(x => x.rowStatus !== 'deleted').map(x => {
+    // 1. Ép kiểu tuyệt đối Mã (String) để tránh sai lệch dữ liệu Sheets (Number) và Web (String)
+    x.authorCode = String(x.authorCode || '').trim();
+    x.sieuthiCode = String(x.sieuthiCode || '').trim();
+
+    // 2. Parse lại chuỗi mảng JSON nếu có
     if (typeof x.sanphamList === 'string') {
       try { x.sanphamList = JSON.parse(x.sanphamList); } catch(e) { x.sanphamList = []; }
     }
     if (typeof x.nhanvienList === 'string') {
       try { x.nhanvienList = JSON.parse(x.nhanvienList); } catch(e) { x.nhanvienList = []; }
     }
-    if (x.ngay && x.ngay.includes('T')) x.ngay = x.ngay.split('T')[0];
+    
+    // 3. Tự nhận diện và lật ngược ngày tháng nếu Sheets trả về DD/MM/YYYY
+    if (x.ngay) {
+      let s = String(x.ngay).trim();
+      if (s.includes('T')) {
+        s = s.split('T')[0];
+      } else if (s.includes('/')) {
+        const p = s.split('/');
+        // Nhận diện DD/MM/YYYY
+        if (p[2] && p[2].length === 4) {
+          s = `${p[2]}-${p[1].padStart(2,'0')}-${p[0].padStart(2,'0')}`;
+        }
+        // Nhận diện YYYY/MM/DD
+        else if (p[0] && p[0].length === 4) {
+          s = `${p[0]}-${p[1].padStart(2,'0')}-${p[2].padStart(2,'0')}`;
+        }
+      }
+      x.ngay = s;
+    }
     return x;
   });
 
-  activityLog          = d.activityLog || [];
+  activityLog = d.activityLog || [];
 
+  // Lọc lấy đúng đơn của QLTP, sử dụng so sánh chuỗi (String) tuyệt đối
   if (currentUser.role === 'qltp') {
-    declarations = declarations.filter(x => x.authorCode === currentUser.code);
+    const myCode = String(currentUser.code).trim();
+    declarations = declarations.filter(x => x.authorCode === myCode);
   }
 
   updateMasterChips();
@@ -323,7 +335,6 @@ function setupUI() {
   document.getElementById('btnCreate').style.display  = (isQL || isAdmin) ? '' : 'none';
   document.getElementById('btnImport').style.display  = (isQL || isAdmin) ? '' : 'none';
 
-  // FIX BUG 1: Lấy ngày hiện tại theo múi giờ địa phương thay vì ISO (UTC)
   const d_now = new Date();
   const today = d_now.getFullYear() + '-' + String(d_now.getMonth()+1).padStart(2,'0') + '-' + String(d_now.getDate()).padStart(2,'0');
   
@@ -362,6 +373,7 @@ function applyFilter() {
   const fTo   = document.getElementById('fltTo').value;
 
   filteredDecls = declarations.filter(d => {
+    // So sánh filter mã cũng phải ép sang String
     if (fST && !String(d.sieuthiCode).toUpperCase().includes(fST)) return false;
     if (fFrom && d.ngay < fFrom) return false;
     if (fTo   && d.ngay > fTo)   return false;
@@ -390,7 +402,7 @@ function renderTable() {
     const nvFull = (d.nhanvienList || []).map(x => `${x.code} - ${x.name}`).join('\n');
 
     let actions = `<button class="btn btn-sm btn-gray" onclick="openDetail('${d.id}')">👁 Xem</button> `;
-    if (currentUser.role === 'qltp' && d.authorCode === currentUser.code) {
+    if (currentUser.role === 'qltp' && String(d.authorCode) === String(currentUser.code)) {
       actions += `<button class="btn btn-sm btn-blue" onclick="openEdit('${d.id}')">✏ Sửa</button> `;
       actions += `<button class="btn btn-sm btn-red" onclick="softDelete('${d.id}')">🗑</button>`;
     }
@@ -433,7 +445,7 @@ function updateSelectionUI() {
 }
 
 // ============================================================
-// 8. MULTI-SELECT DROPDOWN (Siêu thị / Sản phẩm / Nhân viên)
+// 8. MULTI-SELECT DROPDOWN
 // ============================================================
 
 const msSearchDebounced = debounce(function(field, q) {
@@ -453,7 +465,7 @@ function _msRender(field, q) {
   let items = masterData[key] || [];
 
   if (field === 'st' && currentUser.role === 'qltp') {
-    items = items.filter(s => s.qltpCode === currentUser.code);
+    items = items.filter(s => String(s.qltpCode) === String(currentUser.code));
   }
   if (field === 'nv' && currentUser.role === 'qltp' && selST) {
     items = items.filter(n => !n.sieuthiCode || n.sieuthiCode === selST.code);
@@ -599,11 +611,14 @@ async function submitCreate() {
   if (!selST)            return toast('error', 'Chọn Siêu Thị!');
   if (!selSP.length)     return toast('error', 'Chọn ít nhất 1 Sản Phẩm!');
   if (!selNV.length)     return toast('error', 'Chọn ít nhất 1 Nhân Viên!');
+  
   const ngay  = document.getElementById('inpNgay').value;
   const tuGio = document.getElementById('inpTuGio').value;
   const denGio= document.getElementById('inpDenGio').value;
-  if (!ngay)  return toast('error', 'Chọn Ngày!');
+
+  if (!ngay) return toast('error', 'Chọn Ngày!');
   if (!tuGio || !denGio) return toast('error', 'Nhập đủ Từ giờ và Đến giờ!');
+
   if (tuGio < '05:00' || tuGio > '22:00' || denGio < '05:00' || denGio > '22:00')
     return toast('error', 'Giờ phải trong khoảng 05:00 – 22:00!');
   if (tuGio >= denGio) return toast('error', 'Từ giờ phải nhỏ hơn Đến giờ!');
@@ -767,7 +782,7 @@ function renderHistory() {
 
   let log = role === 'admin'
     ? activityLog
-    : activityLog.filter(h => h.userCode === currentUser.code);
+    : activityLog.filter(h => String(h.userCode) === String(currentUser.code));
 
   if (q) {
     log = log.filter(h =>
@@ -848,7 +863,6 @@ function openImportModal() {
   showModal('modalImport');
 }
 
-// ── SỬA #1: Thêm cellDates:true để SheetJS tự convert date serial → JS Date ──
 function onFileImport(e) {
   const file = e.target.files[0]; if (!file) return;
   const reader = new FileReader();
@@ -860,12 +874,8 @@ function onFileImport(e) {
   reader.readAsArrayBuffer(file);
 }
 
-// ── SỬA #2: 3 helper xử lý định dạng Excel ──────────────────────────────────
-
-// Convert Excel date (JS Date từ cellDates, serial number, hoặc DD/MM/YYYY) → YYYY-MM-DD
 function excelDateToISO(val) {
   if (!val && val !== 0) return '';
-  // cellDates:true → JS Date object
   if (val instanceof Date) {
     const y = val.getFullYear();
     const m = String(val.getMonth() + 1).padStart(2, '0');
@@ -874,14 +884,12 @@ function excelDateToISO(val) {
   }
   const s = String(val).trim();
   if (!s) return '';
-  // DD/MM/YYYY hoặc YYYY/MM/DD
   if (s.includes('/')) {
     const parts = s.split('/');
     return parts[0].length === 4
       ? `${parts[0]}-${parts[1].padStart(2,'0')}-${parts[2].padStart(2,'0')}`
       : `${parts[2]}-${parts[1].padStart(2,'0')}-${parts[0].padStart(2,'0')}`;
   }
-  // Excel serial number dạng số (46137...)
   if (!isNaN(s) && Number(s) > 40000) {
     const ms  = Math.round((Number(s) - 25569) * 86400 * 1000);
     const dt  = new Date(ms);
@@ -891,20 +899,16 @@ function excelDateToISO(val) {
   return s;
 }
 
-// Convert Excel time (fraction 0-1, "8h30", "H:MM", "HH:MM") → HH:MM
 function excelTimeToHHMM(val) {
   if (val === '' || val === null || val === undefined) return '';
-  // cellDates:true có thể trả về Date object cho ô time
   if (val instanceof Date) {
     return String(val.getHours()).padStart(2,'0') + ':' + String(val.getMinutes()).padStart(2,'0');
   }
   const s = String(val).trim();
   if (/^\d{2}:\d{2}$/.test(s)) return s;
   if (/^\d{1}:\d{2}$/.test(s)) return '0' + s;
-  // Dạng "8h30" hoặc "08h30"
   const hStyle = s.match(/^(\d{1,2})[hH](\d{2})$/);
   if (hStyle) return String(hStyle[1]).padStart(2,'0') + ':' + hStyle[2];
-  // Fraction 0-1 (Excel lưu giờ dạng thập phân)
   if (!isNaN(s) && s !== '') {
     const f = parseFloat(s);
     if (f >= 0 && f < 2) {
@@ -915,40 +919,34 @@ function excelTimeToHHMM(val) {
   return s;
 }
 
-// Chuẩn hóa mã: bỏ .0, xử lý scientific notation (8.93E12 → "8934868100850")
 function cleanCode(val) {
   if (val === '' || val === null || val === undefined) return '';
   const s = String(val).trim();
   if (!s) return '';
-  // Scientific notation hoặc float
   const n = parseFloat(s);
   if (!isNaN(n) && isFinite(n)) return String(Math.round(n));
   return s;
 }
 
-// ── SỬA #3: parseImport dùng các helper mới ──────────────────────────────────
 function parseImport(rawRows) {
   importRows = [];
   let html = '';
   let okCount = 0, errCount = 0;
 
   rawRows.forEach((r, i) => {
-    // Dùng helper thay cho String().trim() thô
     const stCode = cleanCode(r[0]);
     const tuGio  = excelTimeToHHMM(r[2]);
     const denGio = excelTimeToHHMM(r[3]);
-    // Chấp nhận cả ";" và "," làm dấu phân cách mã SP/NV
     const spCodes = String(r[4] || '').split(/[;,]/).map(x => cleanCode(x)).filter(Boolean);
     const nvCodes = String(r[5] || '').split(/[;,]/).map(x => cleanCode(x)).filter(Boolean);
 
     const errs = [];
 
-    const stObj = masterData.sieuthi.find(s => s.code === stCode);
+    const stObj = masterData.sieuthi.find(s => String(s.code) === String(stCode));
     if (!stObj) errs.push(`Không tìm thấy mã ST "${stCode}"`);
-    if (stObj && currentUser.role === 'qltp' && stObj.qltpCode !== currentUser.code)
+    if (stObj && currentUser.role === 'qltp' && String(stObj.qltpCode) !== String(currentUser.code))
       errs.push('ST ngoài phạm vi QLTP');
 
-    // Convert ngày bằng helper (xử lý JS Date, serial, DD/MM/YYYY)
     const ngay = excelDateToISO(r[1]);
     if (!ngay || ngay.length < 8) errs.push('Sai định dạng ngày');
 
@@ -959,7 +957,7 @@ function parseImport(rawRows) {
 
     const sanphamList = [];
     spCodes.forEach(code => {
-      const sp = masterData.sanpham.find(x => x.code === code);
+      const sp = masterData.sanpham.find(x => String(x.code) === String(code));
       if (sp) sanphamList.push({ code: sp.code, name: sp.name });
       else errs.push(`Không tìm thấy mã SP "${code}"`);
     });
@@ -967,7 +965,7 @@ function parseImport(rawRows) {
 
     const nhanvienList = [];
     nvCodes.forEach(code => {
-      const nv = masterData.nhanvien.find(x => x.code === code);
+      const nv = masterData.nhanvien.find(x => String(x.code) === String(code));
       if (nv) nhanvienList.push({ code: nv.code, name: nv.name });
       else errs.push(`Không tìm thấy mã NV "${code}"`);
     });
@@ -980,7 +978,6 @@ function parseImport(rawRows) {
       importRows.push({ stCode, stName: stObj.name, ngay, tuGio, denGio, sanphamList, nhanvienList });
     }
 
-    // Hiển thị dateRaw thân thiện trong preview
     const dateDisplay = ngay && ngay.length >= 8
       ? ngay.split('-').reverse().join('/')
       : String(r[1] || '');
