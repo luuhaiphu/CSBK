@@ -3,276 +3,664 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Khai Báo Bán Hàng Đội Biệt Kích - BHX</title>
+<title>BHX — Khai Báo Biệt Kích</title>
 <script src="https://cdn.sheetjs.com/xlsx-latest/package/dist/xlsx.full.min.js"></script>
 <style>
-  :root {
-    --green: #1a7a3c; --green-dark: #145f2e; --blue: #0d6efd; --red: #dc3545;
-    --yellow: #ffc107; --orange: #fd7e14;
-    --yellow-bg: #fff8e1; --green-bg: #e8f5e9; --red-bg: #ffebee;
-    --text: #212529; --text-muted: #6c757d; --border: #dee2e6;
-    --shadow: 0 4px 12px rgba(0,0,0,0.15); --radius: 6px;
-  }
-  * { box-sizing: border-box; margin: 0; padding: 0; font-family: 'Segoe UI', Arial, sans-serif; }
-  body { font-size: 13px; color: var(--text); background: #f0f0f0; overflow-x: hidden; }
+/* ============================================================
+   DESIGN: Industrial / Utilitarian — Xanh lá BHX chủ đạo
+   Font: Be Vietnam Pro (Google Fonts CDN via @import)
+   ============================================================ */
+@import url('https://fonts.googleapis.com/css2?family=Be+Vietnam+Pro:wght@400;500;600;700;800&display=swap');
 
-  #appContainer { display: flex; flex-direction: column; min-height: 100vh; transition: filter 0.3s; }
-  #appContainer.blurred { filter: blur(8px); pointer-events: none; user-select: none; height: 100vh; overflow: hidden; }
+:root {
+  --green:       #1a7a3c;
+  --green-dark:  #145f2e;
+  --green-light: #e8f5e9;
+  --green-mid:   #c8e6c9;
+  --blue:        #1565c0;
+  --blue-light:  #e3f2fd;
+  --red:         #c62828;
+  --red-light:   #ffebee;
+  --orange:      #e65100;
+  --yellow:      #f9a825;
+  --yellow-light:#fff8e1;
+  --gray-50:     #fafafa;
+  --gray-100:    #f4f4f4;
+  --gray-200:    #e8e8e8;
+  --gray-400:    #bdbdbd;
+  --gray-600:    #757575;
+  --gray-800:    #333333;
+  --text:        #1a1a1a;
+  --border:      #dde1e6;
+  --shadow-sm:   0 1px 4px rgba(0,0,0,0.08);
+  --shadow:      0 4px 16px rgba(0,0,0,0.12);
+  --shadow-lg:   0 8px 32px rgba(0,0,0,0.18);
+  --radius-sm:   4px;
+  --radius:      8px;
+  --radius-lg:   12px;
+}
 
-  /* LOGIN */
-  #loginOverlay { position: fixed; inset: 0; background: linear-gradient(135deg,#1a7a3c 0%,#0d4f26 100%); z-index: 10000; display: flex; align-items: center; justify-content: center; }
-  .login-box { background: white; padding: 28px 32px; border-radius: 12px; width: 400px; box-shadow: 0 20px 60px rgba(0,0,0,0.4); }
-  .login-box h2 { text-align: center; color: var(--green); margin-bottom: 6px; font-size: 18px; }
-  .login-box .sub { text-align:center; color:#888; font-size:12px; margin-bottom:20px; }
-  .login-box .form-group { margin-bottom: 15px; }
-  .login-box label { display: block; margin-bottom: 6px; font-weight: 600; color: #444; font-size:12px; }
-  .login-box .form-control { width: 100%; padding: 10px 12px; border: 1px solid var(--border); border-radius: 6px; font-size: 14px; }
-  .login-box .form-control:focus { outline: none; border-color: var(--green); box-shadow: 0 0 0 3px rgba(26,122,60,0.15); }
-  .login-box .btn-login { width: 100%; padding: 12px; font-size: 14px; margin-top:5px; background: var(--green); color: white; border: none; border-radius: 6px; font-weight: bold; cursor: pointer; letter-spacing:.5px; }
-  .login-box .btn-login:hover { background: var(--green-dark); }
-  .login-hint { background:#f0fff4; border:1px solid #b2dfdb; border-radius:6px; padding:10px 14px; margin-top:12px; font-size:11.5px; color:#2e7d32; line-height:1.6; }
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+html { scroll-behavior: smooth; }
+body {
+  font-family: 'Be Vietnam Pro', 'Segoe UI', Arial, sans-serif;
+  font-size: 13px;
+  color: var(--text);
+  background: #eef0f3;
+  overflow-x: hidden;
+  line-height: 1.5;
+}
 
-  /* QLTP AUTOCOMPLETE IN LOGIN */
-  .login-suggest { position:absolute; top:100%; left:0; right:0; background:white; border:1px solid var(--border); border-top:none; border-radius:0 0 6px 6px; max-height:200px; overflow-y:auto; z-index:99999; box-shadow: var(--shadow); }
-  .login-suggest-item { padding:10px 14px; cursor:pointer; border-bottom:1px solid #f0f0f0; display:flex; justify-content:space-between; font-size:13px; }
-  .login-suggest-item:hover { background:var(--green-bg); }
-  .login-suggest-item .mst { font-weight:700; color:var(--green); }
-  .login-suggest-item .name { color:#555; }
-  .login-input-wrap { position:relative; }
+/* ── SCROLLBAR ── */
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-track { background: var(--gray-100); }
+::-webkit-scrollbar-thumb { background: var(--gray-400); border-radius: 3px; }
 
-  /* HEADER */
-  .header { background: var(--green); color: white; display: flex; align-items: center; height: 50px; padding: 0 16px; position: sticky; top: 0; z-index: 1000; box-shadow: 0 2px 8px rgba(0,0,0,0.3); }
-  .header-logo { font-size:20px; margin-right:10px; }
-  .header-title { font-weight: bold; font-size: 16px; margin-right: auto; letter-spacing: 0.5px; }
-  .header-user { background: rgba(255,255,255,0.15); border-radius: 6px; padding: 6px 14px; font-size: 12px; display: flex; align-items: center; gap: 8px; cursor: pointer; }
-  .header-user:hover { background: rgba(255,255,255,0.25); }
+/* ── TOAST ── */
+.toast-wrap {
+  position: fixed; top: 64px; right: 20px; z-index: 99999;
+  display: flex; flex-direction: column; gap: 8px; pointer-events: none;
+}
+.toast {
+  padding: 11px 18px; border-radius: var(--radius); color: #fff;
+  font-weight: 600; font-size: 13px; box-shadow: var(--shadow);
+  animation: toastIn .25s ease; pointer-events: auto;
+  display: flex; align-items: center; gap: 8px; min-width: 220px;
+}
+.toast.success { background: var(--green); }
+.toast.error   { background: var(--red); }
+.toast.warning { background: var(--orange); }
+.toast.info    { background: var(--blue); }
+@keyframes toastIn { from { transform: translateX(110%); opacity: 0; } to { transform: translateX(0); opacity: 1; } }
 
-  /* SYNC STATUS BADGE */
-  .sync-badge { display: inline-flex; align-items:center; gap:5px; background: rgba(255,255,255,0.15); border-radius:6px; padding:4px 10px; font-size:11px; margin-right:8px; }
-  .sync-dot { width:8px; height:8px; border-radius:50%; background:#4caf50; }
-  .sync-dot.syncing { background:#ffc107; animation: blink 0.8s infinite; }
-  .sync-dot.error { background:#f44336; }
-  @keyframes blink { 0%,100%{opacity:1} 50%{opacity:0.3} }
+/* ── OVERLAY LOADING ── */
+#loadingOverlay {
+  position: fixed; inset: 0; background: rgba(0,0,0,.45);
+  z-index: 99998; display: none;
+  align-items: center; justify-content: center; flex-direction: column; gap: 14px;
+}
+#loadingOverlay.show { display: flex; }
+.spinner {
+  width: 44px; height: 44px; border: 4px solid rgba(255,255,255,.3);
+  border-top-color: #fff; border-radius: 50%;
+  animation: spin .7s linear infinite;
+}
+.loading-text { color: #fff; font-weight: 600; font-size: 14px; }
+@keyframes spin { to { transform: rotate(360deg); } }
 
-  .breadcrumb { padding: 8px 16px; font-size: 13px; color: #333; background: white; border-bottom: 1px solid var(--border); }
-  .role-bar { background: #e3f2fd; border-bottom: 2px solid var(--blue); padding: 6px 16px; display: flex; align-items: center; gap: 10px; font-size: 13px; font-weight: 600; color: #084298; }
+/* ============================================================
+   LOGIN
+   ============================================================ */
+#loginScreen {
+  position: fixed; inset: 0;
+  background: linear-gradient(135deg, #0d3b1e 0%, #1a7a3c 55%, #0a4f28 100%);
+  z-index: 9000; display: flex; align-items: center; justify-content: center;
+}
+#loginScreen.hidden { display: none; }
 
-  .main { padding: 12px 16px; flex: 1; }
-  .filter-area { background: white; padding: 12px 16px; border-radius: var(--radius); margin-bottom: 10px; box-shadow: var(--shadow); }
-  .filter-row { display: flex; gap: 12px; align-items: flex-end; flex-wrap: wrap; }
-  .filter-group { display: flex; flex-direction: column; gap: 4px; }
-  .filter-group label { font-size: 12px; font-weight: 600; color: #444; }
-  .filter-group input, .filter-group select { padding: 6px 10px; border: 1px solid var(--border); border-radius: 4px; font-size: 13px; min-width: 150px; }
+.login-card {
+  background: #fff;
+  border-radius: var(--radius-lg);
+  width: 420px; max-width: 95vw;
+  box-shadow: var(--shadow-lg);
+  overflow: hidden;
+}
+.login-card-header {
+  background: var(--green);
+  padding: 28px 32px 22px;
+  text-align: center;
+}
+.login-card-header .eagle { font-size: 48px; margin-bottom: 8px; }
+.login-card-header h1 {
+  color: #fff; font-size: 18px; font-weight: 800;
+  letter-spacing: .5px; margin-bottom: 4px;
+}
+.login-card-header p { color: rgba(255,255,255,.75); font-size: 12px; }
+.login-card-body { padding: 28px 32px 32px; }
 
-  .action-bar { display:flex; gap:8px; align-items:center; margin-bottom:10px; flex-wrap:wrap; background:white; padding:10px 14px; border-radius:var(--radius); box-shadow:var(--shadow); }
-  .btn { padding: 6px 14px; border-radius: 4px; border: none; cursor: pointer; font-size: 13px; font-weight: 500; transition: 0.2s; display: inline-flex; align-items: center; gap: 5px; }
-  .btn-primary { background: var(--blue); color: white; } .btn-primary:hover { background:#0a58ca; }
-  .btn-secondary { background: #6c757d; color: white; }
-  .btn-success { background: var(--green); color: white; } .btn-success:hover { background:var(--green-dark); }
-  .btn-danger { background: var(--red); color: white; }
-  .btn-warning { background: var(--yellow); color: #212529; }
-  .btn-search { background:#495057; color:white; }
-  .btn-export { background:#198754; color:white; }
-  .btn-import { background:#0d6efd; color:white; }
-  .btn-link { color:var(--blue); text-decoration:none; font-size:12px; display:inline-flex; align-items:center; gap:4px; font-weight:600;}
-  .btn-sm { padding: 4px 8px; font-size: 12px; }
-  .btn:disabled { opacity: 0.6; cursor: not-allowed; }
+.form-group { margin-bottom: 18px; }
+.form-group label {
+  display: block; font-weight: 700; font-size: 12px;
+  color: var(--gray-600); text-transform: uppercase; letter-spacing: .5px;
+  margin-bottom: 7px;
+}
+.form-control {
+  width: 100%; padding: 10px 12px;
+  border: 1.5px solid var(--border);
+  border-radius: var(--radius-sm);
+  font-size: 13px; font-family: inherit; color: var(--text);
+  transition: border-color .2s, box-shadow .2s;
+  background: #fff;
+}
+.form-control:focus {
+  outline: none; border-color: var(--green);
+  box-shadow: 0 0 0 3px rgba(26,122,60,.12);
+}
+.form-control::placeholder { color: var(--gray-400); }
 
-  .table-area { background: white; border-radius: var(--radius); box-shadow: var(--shadow); overflow: hidden; }
-  .table-container { overflow-x: auto; max-height: calc(100vh - 300px); overflow-y: auto; }
-  table { width: 100%; border-collapse: collapse; font-size: 13px; }
-  thead th { background: var(--green); color: white; padding: 10px; text-align: left; font-weight: 600; position: sticky; top: 0; z-index: 10; white-space: nowrap; }
-  tbody tr { border-bottom: 1px solid #eee; }
-  tbody tr:hover { background: #f8fff9; }
-  tbody td { padding: 8px 10px; vertical-align: middle; }
+.btn-login {
+  width: 100%; padding: 12px;
+  background: var(--green); color: #fff;
+  border: none; border-radius: var(--radius-sm);
+  font-size: 14px; font-weight: 800; font-family: inherit;
+  letter-spacing: .5px; cursor: pointer;
+  transition: background .2s, transform .1s;
+}
+.btn-login:hover { background: var(--green-dark); }
+.btn-login:active { transform: scale(.99); }
 
-  .badge { display: inline-flex; align-items: center; gap: 3px; padding: 3px 8px; border-radius: 12px; font-size: 11px; font-weight: 600; white-space: nowrap; }
-  .badge-pending { background: #fff3cd; color: #856404; }
-  .badge-approved { background: var(--green-bg); color: #155724; }
-  .badge-rejected { background: var(--red-bg); color: #721c24; }
-  .manual-tag { background: var(--yellow-bg); border: 1px solid var(--yellow); color: #6d4c00; padding: 2px 6px; border-radius: 3px; font-size: 11px; font-weight: 600; }
+/* Suggest dropdown in login */
+.suggest-wrap { position: relative; }
+.suggest-list {
+  position: absolute; top: 100%; left: 0; right: 0;
+  background: #fff; border: 1.5px solid var(--green);
+  border-top: none; border-radius: 0 0 var(--radius-sm) var(--radius-sm);
+  max-height: 200px; overflow-y: auto; z-index: 9999;
+  box-shadow: var(--shadow);
+}
+.suggest-list.hidden { display: none; }
+.suggest-item {
+  padding: 9px 14px; cursor: pointer;
+  display: flex; justify-content: space-between; align-items: center;
+  font-size: 13px; border-bottom: 1px solid var(--gray-100);
+  transition: background .15s;
+}
+.suggest-item:hover { background: var(--green-light); }
+.suggest-item .code { font-weight: 700; color: var(--green); }
+.suggest-item .name { color: var(--gray-600); font-size: 12px; }
 
-  /* MODALS */
-  .modal-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.5); z-index: 2000; display: flex; align-items: flex-start; justify-content: center; padding-top: 40px; }
-  .modal-overlay.hidden { display: none; }
-  .modal { background: white; border-radius: 10px; width: 620px; max-width: 95vw; box-shadow: 0 10px 30px rgba(0,0,0,0.25); display: flex; flex-direction: column; max-height: 90vh; }
-  .modal-lg { width: 880px; } .modal-xl { width: 1080px; }
-  .modal-header { padding: 16px 20px; border-bottom: 1px solid var(--border); display: flex; justify-content: space-between; align-items: center; }
-  .modal-header h3 { font-size: 16px; margin: 0; color: var(--green); }
-  .modal-close { background: none; border: none; font-size: 22px; cursor: pointer; color: #999; }
-  .modal-body { padding: 20px; overflow-y: auto; flex: 1; }
-  .modal-footer { padding: 12px 20px; border-top: 1px solid var(--border); display: flex; justify-content: flex-end; gap: 8px; background: #fafafa; border-radius: 0 0 10px 10px; }
+.login-role-tabs {
+  display: flex; margin-bottom: 20px; border: 1.5px solid var(--border);
+  border-radius: var(--radius-sm); overflow: hidden;
+}
+.login-role-tab {
+  flex: 1; padding: 9px; text-align: center;
+  cursor: pointer; font-weight: 700; font-size: 12px;
+  background: var(--gray-50); color: var(--gray-600);
+  transition: background .2s, color .2s; border: none; font-family: inherit;
+}
+.login-role-tab.active { background: var(--green); color: #fff; }
 
-  .form-control { width: 100%; padding: 8px; border: 1px solid var(--border); border-radius: 4px; font-size: 13px; }
-  .form-group { margin-bottom: 14px; }
-  .form-group label { display: block; font-weight: 600; margin-bottom: 5px; color: #444; }
-  .form-row { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
-  .form-row-3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 14px; }
+/* ============================================================
+   APP SHELL
+   ============================================================ */
+#appShell { display: none; flex-direction: column; min-height: 100vh; }
+#appShell.show { display: flex; }
 
-  /* [FIX] 24H TIME SELECT */
-  .time-select-wrap { display:flex; gap:4px; align-items:center; }
-  .time-select-wrap select { flex:1; }
-  .time-colon { font-weight:bold; font-size:16px; color:#444; padding:0 2px; }
+/* ── HEADER ── */
+.header {
+  background: var(--green); color: #fff;
+  height: 56px; display: flex; align-items: center;
+  padding: 0 20px; gap: 12px;
+  position: sticky; top: 0; z-index: 500;
+  box-shadow: 0 2px 8px rgba(0,0,0,.25);
+}
+.header-logo { font-size: 24px; line-height: 1; }
+.header-title {
+  font-size: 16px; font-weight: 800; letter-spacing: .3px;
+  margin-right: auto;
+}
+.header-title span { font-weight: 400; opacity: .75; font-size: 13px; }
 
-  /* SEARCHABLE DROPDOWN */
-  .search-drop-wrap { position: relative; width: 100%; }
-  .search-drop-input { width:100%; padding: 8px; border: 1px solid var(--border); border-radius: 4px; font-size: 13px; }
-  .dropdown-list { position: absolute; top: 100%; left: 0; right: 0; background: white; border: 1px solid var(--border); border-top: none; max-height: 220px; overflow-y: auto; z-index: 3000; box-shadow: var(--shadow); border-radius: 0 0 6px 6px; }
-  .dropdown-list.hidden { display: none; }
-  .dropdown-item { padding: 8px 12px; cursor: pointer; display: flex; justify-content: space-between; border-bottom: 1px solid #f0f0f0; font-size:13px; }
-  .dropdown-item:hover { background: var(--green-bg); }
-  .dropdown-item-manual { padding: 8px 12px; cursor: pointer; color: #e65100; background: #fff8e1; font-weight: 600; border-top:1px solid #ffe082; font-size:13px; }
-  .dropdown-item-manual:hover { background:#fff3cd; }
-  .selected-tags { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
-  .tag-item { display: inline-flex; align-items: center; gap: 6px; padding: 4px 10px; border-radius: 15px; font-size: 12px; font-weight: 600; background: var(--green-bg); color: #155724; border: 1px solid #c3e6cb; }
-  .tag-item.manual { background: var(--yellow-bg); color: #6d4c00; border: 1px solid var(--yellow); }
-  .tag-item .remove { cursor: pointer; font-size: 14px; line-height:1; }
+.sync-pill {
+  display: flex; align-items: center; gap: 6px;
+  background: rgba(255,255,255,.12); border-radius: 20px;
+  padding: 5px 12px; font-size: 11.5px; font-weight: 600; cursor: default;
+}
+.sync-dot {
+  width: 8px; height: 8px; border-radius: 50%; background: #69f0ae;
+  transition: background .3s;
+}
+.sync-dot.syncing { background: var(--yellow); animation: pulse .7s infinite; }
+.sync-dot.error   { background: #ff5252; }
+@keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.3} }
 
-  /* TABS */
-  .tabs { display: flex; border-bottom: 2px solid var(--green); margin-bottom: 15px; flex-wrap:wrap; }
-  .tab-btn { padding: 10px 18px; background: none; border: none; font-weight: 600; cursor: pointer; color: #666; margin-bottom: -2px; border-bottom: 2px solid transparent; font-size:13px; }
-  .tab-btn.active { color: var(--green); border-bottom-color: var(--green); background:#f0fff4; }
-  .tab-content { display: none; }
-  .tab-content.active { display: block; }
+.header-user {
+  display: flex; align-items: center; gap: 8px;
+  background: rgba(255,255,255,.12); border-radius: 20px;
+  padding: 6px 14px; cursor: pointer; font-size: 12px; font-weight: 600;
+  transition: background .2s;
+}
+.header-user:hover { background: rgba(255,255,255,.22); }
+.header-user .avatar {
+  width: 26px; height: 26px; border-radius: 50%;
+  background: rgba(255,255,255,.25);
+  display: flex; align-items: center; justify-content: center;
+  font-size: 14px;
+}
 
-  /* IMPORT ZONE */
-  .upload-zone { border: 2px dashed #bbb; padding: 25px; text-align: center; cursor: pointer; border-radius: 8px; background: #fafafa; transition:.2s; }
-  .upload-zone:hover { border-color: var(--blue); background: #f0f8ff; }
-  .bulk-row { display: flex; gap: 10px; padding: 6px 10px; border-bottom: 1px solid #eee; font-size: 12px; align-items:center; }
-  .bulk-row.valid { background:#f0fff4; } .bulk-row.error { background:#fff5f5; } .bulk-row.manual { background:#fffbf0; }
+/* ── ROLE BAR ── */
+.role-bar {
+  background: #fff; border-bottom: 2px solid var(--green);
+  padding: 0 20px; height: 38px;
+  display: flex; align-items: center; gap: 14px;
+  font-size: 12.5px;
+}
+.role-pill {
+  display: inline-flex; align-items: center; gap: 5px;
+  padding: 3px 10px; border-radius: 20px; font-weight: 700; font-size: 11px;
+}
+.role-pill.admin { background: #fff3e0; color: var(--orange); border: 1px solid #ffe0b2; }
+.role-pill.qltp  { background: var(--green-light); color: var(--green-dark); border: 1px solid var(--green-mid); }
 
-  /* MASTER DATA */
-  .import-master-card { background:white; border:1px solid var(--border); border-radius:8px; padding:16px; margin-bottom:14px; position:relative; }
-  .import-master-card h4 { color:var(--green); margin-bottom:8px; font-size:14px; display:flex; align-items:center; gap:8px; }
-  .import-master-card .col-hint { background:#f8f9fa; border:1px solid #e0e0e0; border-radius:4px; padding:8px 12px; font-size:11.5px; color:#555; margin-bottom:10px; }
-  .import-master-card .col-hint span { display:inline-block; background:#e3f2fd; color:#1565c0; padding:2px 8px; border-radius:3px; margin:2px; font-weight:600; }
-  .data-stats { display:flex; gap:10px; flex-wrap:wrap; margin-top:8px; }
-  .stat-chip { background:var(--green-bg); color:#155724; border:1px solid #c3e6cb; border-radius:15px; padding:4px 12px; font-size:12px; font-weight:600; }
-  .dl-master-btn { position:absolute; top:16px; right:16px; }
+.btn-logout {
+  margin-left: auto; padding: 4px 14px;
+  background: var(--red-light); color: var(--red); border: 1px solid #ef9a9a;
+  border-radius: var(--radius-sm); font-size: 12px; font-weight: 700;
+  cursor: pointer; font-family: inherit; transition: background .2s;
+}
+.btn-logout:hover { background: var(--red); color: #fff; }
 
-  /* GOOGLE SHEETS CONFIG */
-  .sheets-config-card { background: #e8f4f8; border: 1px solid #90caf9; border-radius: 8px; padding: 16px; margin-bottom: 16px; }
-  .sheets-config-card h4 { color: #1565c0; margin-bottom: 10px; font-size: 14px; }
+/* ── MAIN ── */
+.main { padding: 16px 20px; flex: 1; }
 
-  .toast-container { position: fixed; top: 60px; right: 20px; z-index: 10001; display: flex; flex-direction: column; gap: 10px; }
-  .toast { padding: 12px 20px; border-radius: 6px; color: white; font-weight: 600; box-shadow: var(--shadow); animation: slideIn 0.3s; min-width:200px; }
-  .toast.success { background: var(--green); } .toast.error { background: var(--red); } .toast.warning { background: var(--orange); color:white; }
-  @keyframes slideIn { from { transform: translateX(100%); opacity:0; } to { transform: translateX(0); opacity:1; } }
+/* ── FILTER CARD ── */
+.card {
+  background: #fff; border-radius: var(--radius);
+  box-shadow: var(--shadow-sm); border: 1px solid var(--border);
+}
+.filter-card { padding: 14px 16px; margin-bottom: 12px; }
+.filter-row { display: flex; gap: 12px; align-items: flex-end; flex-wrap: wrap; }
+.filter-group { display: flex; flex-direction: column; gap: 5px; }
+.filter-group label {
+  font-size: 11px; font-weight: 700; color: var(--gray-600);
+  text-transform: uppercase; letter-spacing: .4px;
+}
+.filter-group .form-control { min-width: 140px; }
 
-  .footer { text-align: center; padding: 12px; background: #e9ecef; color: #666; font-size: 12px; margin-top: auto; }
-  .empty-state { text-align:center; padding:50px 20px; color:#aaa; }
-  .empty-state .icon { font-size:48px; margin-bottom:12px; }
+/* ── BUTTONS ── */
+.btn {
+  display: inline-flex; align-items: center; gap: 5px;
+  padding: 7px 14px; border-radius: var(--radius-sm);
+  font-size: 13px; font-weight: 600; font-family: inherit;
+  border: none; cursor: pointer; transition: all .15s; white-space: nowrap;
+}
+.btn:disabled { opacity: .5; cursor: not-allowed; }
+.btn-sm { padding: 5px 10px; font-size: 12px; }
 
-  /* MANUAL LIST */
-  .manual-list-table { width:100%; border-collapse:collapse; font-size:12px; }
-  .manual-list-table th { background:#fff3cd; padding:6px 8px; text-align:left; border:1px solid #ffe082; }
-  .manual-list-table td { padding:6px 8px; border:1px solid #fff3cd; }
-  .manual-notice { background:#fff8e1; border:1px solid #ffc107; border-radius:6px; padding:10px 14px; margin-top:10px; font-size:12px; color:#6d4c00; line-height:1.6; display:none; }
-  .manual-notice.show { display:block; }
+.btn-green  { background: var(--green); color: #fff; }
+.btn-green:hover { background: var(--green-dark); }
+.btn-blue   { background: var(--blue); color: #fff; }
+.btn-blue:hover { background: #0d47a1; }
+.btn-red    { background: var(--red); color: #fff; }
+.btn-red:hover { background: #b71c1c; }
+.btn-gray   { background: var(--gray-200); color: var(--gray-800); }
+.btn-gray:hover { background: var(--gray-400); }
+.btn-outline-green {
+  background: transparent; color: var(--green);
+  border: 1.5px solid var(--green);
+}
+.btn-outline-green:hover { background: var(--green-light); }
+
+/* ── ACTION BAR ── */
+.action-bar {
+  display: flex; gap: 8px; align-items: center; flex-wrap: wrap;
+  padding: 10px 16px; margin-bottom: 12px;
+  background: #fff; border-radius: var(--radius);
+  box-shadow: var(--shadow-sm); border: 1px solid var(--border);
+}
+.action-bar-right { margin-left: auto; display: flex; gap: 8px; flex-wrap: wrap; }
+
+/* ── TABLE ── */
+.table-card { overflow: hidden; }
+.table-topbar {
+  padding: 8px 16px; background: var(--gray-50);
+  border-bottom: 1px solid var(--border);
+  display: flex; align-items: center; gap: 10px;
+}
+.table-topbar label { font-size: 12px; font-weight: 600; color: var(--gray-600); }
+.record-count { margin-left: auto; font-size: 12px; color: var(--gray-600); }
+
+.tbl-wrap { overflow-x: auto; max-height: calc(100vh - 310px); overflow-y: auto; }
+table { width: 100%; border-collapse: collapse; font-size: 13px; }
+thead th {
+  background: var(--green); color: #fff;
+  padding: 10px 12px; text-align: left; font-weight: 700;
+  position: sticky; top: 0; z-index: 10; white-space: nowrap;
+  font-size: 12px; letter-spacing: .3px;
+}
+thead th:first-child { width: 40px; text-align: center; }
+tbody tr { border-bottom: 1px solid var(--gray-100); transition: background .1s; }
+tbody tr:hover { background: #f0fff4; }
+tbody td { padding: 9px 12px; vertical-align: middle; }
+tbody td:first-child { text-align: center; }
+
+.idx-cell { color: var(--gray-400); font-size: 11px; }
+
+/* Status badge */
+.badge {
+  display: inline-flex; align-items: center; gap: 4px;
+  padding: 3px 9px; border-radius: 20px;
+  font-size: 11px; font-weight: 700; white-space: nowrap;
+}
+.badge-active   { background: var(--green-light); color: var(--green-dark); border: 1px solid var(--green-mid); }
+.badge-deleted  { background: var(--red-light); color: var(--red); border: 1px solid #ffcdd2; }
+
+/* Tag chip */
+.tag { display: inline-flex; align-items: center; gap: 4px; padding: 2px 8px;
+  border-radius: 20px; font-size: 11px; font-weight: 600;
+  background: var(--blue-light); color: var(--blue); border: 1px solid #bbdefb;
+  margin: 1px;
+}
+
+/* ============================================================
+   MODALS
+   ============================================================ */
+.modal-overlay {
+  position: fixed; inset: 0; background: rgba(0,0,0,.5);
+  z-index: 2000; display: flex; align-items: flex-start;
+  justify-content: center; padding: 40px 16px;
+  overflow-y: auto;
+}
+.modal-overlay.hidden { display: none; }
+
+.modal {
+  background: #fff; border-radius: var(--radius-lg);
+  width: 600px; max-width: 100%;
+  box-shadow: var(--shadow-lg);
+  display: flex; flex-direction: column;
+  animation: modalIn .2s ease;
+  margin: auto 0;
+}
+.modal-lg  { width: 800px; }
+.modal-xl  { width: 1000px; }
+.modal-sm  { width: 420px; }
+@keyframes modalIn { from { transform: translateY(-16px); opacity: 0; } to { transform: translateY(0); opacity: 1; } }
+
+.modal-header {
+  padding: 18px 22px; border-bottom: 1px solid var(--border);
+  display: flex; justify-content: space-between; align-items: center;
+}
+.modal-header h3 { font-size: 15px; font-weight: 800; color: var(--green); margin: 0; }
+.modal-close {
+  background: none; border: none; font-size: 24px; cursor: pointer;
+  color: var(--gray-400); transition: color .15s; line-height: 1;
+  padding: 0 4px;
+}
+.modal-close:hover { color: var(--red); }
+.modal-body { padding: 22px; overflow-y: auto; max-height: calc(90vh - 140px); }
+.modal-footer {
+  padding: 14px 22px; border-top: 1px solid var(--border);
+  display: flex; justify-content: flex-end; gap: 8px;
+  background: var(--gray-50); border-radius: 0 0 var(--radius-lg) var(--radius-lg);
+}
+
+.form-row   { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+.form-row-3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 16px; }
+
+/* ── SEARCHABLE MULTI-SELECT ── */
+.multi-select-wrap { position: relative; }
+.ms-input {
+  width: 100%; padding: 9px 12px;
+  border: 1.5px solid var(--border); border-radius: var(--radius-sm);
+  font-size: 13px; font-family: inherit; color: var(--text);
+  transition: border-color .2s;
+}
+.ms-input:focus { outline: none; border-color: var(--green); }
+.ms-dropdown {
+  position: absolute; top: 100%; left: 0; right: 0;
+  background: #fff; border: 1.5px solid var(--green);
+  border-top: none; border-radius: 0 0 var(--radius-sm) var(--radius-sm);
+  max-height: 200px; overflow-y: auto; z-index: 3000;
+  box-shadow: var(--shadow);
+}
+.ms-dropdown.hidden { display: none; }
+.ms-option {
+  padding: 9px 14px; cursor: pointer;
+  display: flex; justify-content: space-between; align-items: center;
+  font-size: 13px; border-bottom: 1px solid var(--gray-100);
+  transition: background .12s;
+}
+.ms-option:hover { background: var(--green-light); }
+.ms-option .opt-code { font-weight: 700; color: var(--green); min-width: 90px; }
+.ms-option .opt-name { color: var(--gray-600); font-size: 12px; }
+.ms-option.selected { background: var(--green-light); }
+.ms-no-result { padding: 10px 14px; color: var(--gray-400); font-size: 12px; text-align: center; }
+
+.tags-wrap { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 8px; min-height: 10px; }
+.tag-chip {
+  display: inline-flex; align-items: center; gap: 5px;
+  padding: 4px 10px; border-radius: 20px; font-size: 12px; font-weight: 600;
+  background: var(--green-light); color: var(--green-dark);
+  border: 1px solid var(--green-mid);
+}
+.tag-chip .rm {
+  cursor: pointer; font-size: 15px; line-height: 1;
+  color: var(--green); transition: color .15s;
+}
+.tag-chip .rm:hover { color: var(--red); }
+
+/* ── TABS ── */
+.tabs { display: flex; border-bottom: 2px solid var(--green); margin-bottom: 18px; flex-wrap: wrap; }
+.tab-btn {
+  padding: 9px 16px; background: none; border: none;
+  font-weight: 700; font-size: 12.5px; cursor: pointer; color: var(--gray-600);
+  border-bottom: 2px solid transparent; margin-bottom: -2px;
+  transition: color .15s; font-family: inherit;
+}
+.tab-btn.active { color: var(--green); border-bottom-color: var(--green); background: var(--green-light); }
+.tab-content { display: none; }
+.tab-content.active { display: block; }
+
+/* ── IMPORT ── */
+.upload-zone {
+  border: 2px dashed var(--gray-400); padding: 28px;
+  text-align: center; cursor: pointer; border-radius: var(--radius);
+  background: var(--gray-50); transition: all .2s;
+}
+.upload-zone:hover { border-color: var(--blue); background: var(--blue-light); }
+.upload-zone .icon { font-size: 36px; margin-bottom: 8px; }
+.upload-zone p { font-weight: 600; color: var(--gray-600); font-size: 13px; }
+
+.preview-row {
+  display: flex; align-items: center; gap: 10px;
+  padding: 7px 12px; border-bottom: 1px solid var(--gray-100);
+  font-size: 12px; border-radius: 4px; margin-bottom: 2px;
+}
+.preview-row.ok   { background: #f0fff4; }
+.preview-row.err  { background: var(--red-light); }
+
+/* ── MASTER DATA CARD ── */
+.master-card {
+  border: 1px solid var(--border); border-radius: var(--radius);
+  padding: 16px; margin-bottom: 14px; position: relative;
+  background: #fff;
+}
+.master-card h4 { color: var(--green); font-size: 14px; margin-bottom: 8px; }
+.col-hint {
+  background: var(--gray-50); border: 1px solid var(--gray-200);
+  border-radius: var(--radius-sm); padding: 8px 12px;
+  font-size: 11.5px; color: var(--gray-600); margin-bottom: 10px;
+}
+.col-hint .chip {
+  display: inline-block; background: var(--blue-light); color: var(--blue);
+  padding: 1px 7px; border-radius: 3px; margin: 2px; font-weight: 700; font-size: 11px;
+}
+.stat-row { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 8px; }
+.stat-chip {
+  padding: 3px 10px; border-radius: 20px; font-size: 11.5px; font-weight: 700;
+  background: var(--green-light); color: var(--green-dark); border: 1px solid var(--green-mid);
+}
+
+/* ── DETAIL VIEW ── */
+.detail-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; font-size: 13px; }
+.detail-item label { font-size: 11px; font-weight: 700; color: var(--gray-600); text-transform: uppercase; letter-spacing: .4px; display: block; margin-bottom: 3px; }
+.detail-item .val { font-weight: 600; color: var(--text); }
+
+/* ── HISTORY TABLE ── */
+.hist-table { width: 100%; border-collapse: collapse; font-size: 12px; }
+.hist-table th { background: var(--gray-100); padding: 8px 10px; text-align: left; font-weight: 700; border-bottom: 1px solid var(--border); }
+.hist-table td { padding: 7px 10px; border-bottom: 1px solid var(--gray-100); }
+
+/* ── FOOTER ── */
+.footer {
+  text-align: center; padding: 14px; background: #fff;
+  border-top: 1px solid var(--border); color: var(--gray-600);
+  font-size: 12px; margin-top: auto;
+}
+
+/* ── SHEETS CONFIG ── */
+.config-card {
+  background: var(--blue-light); border: 1px solid #90caf9;
+  border-radius: var(--radius); padding: 18px; margin-bottom: 16px;
+}
+.config-card h4 { color: var(--blue); margin-bottom: 10px; font-size: 14px; }
+.step-box {
+  background: var(--gray-50); border: 1px solid var(--border);
+  border-radius: var(--radius); padding: 16px; font-size: 12.5px;
+  line-height: 2; color: var(--gray-800);
+}
+.step-box b { color: var(--green-dark); }
+
+/* ── OFFLINE BANNER ── */
+.offline-banner {
+  background: var(--orange); color: #fff;
+  text-align: center; padding: 6px 16px; font-size: 12.5px; font-weight: 600;
+  display: none;
+}
+.offline-banner.show { display: block; }
+
+/* ── EMPTY STATE ── */
+.empty-state {
+  text-align: center; padding: 50px 20px; color: var(--gray-400);
+}
+.empty-state .icon { font-size: 48px; margin-bottom: 10px; }
+.empty-state p { font-weight: 600; font-size: 14px; }
+
+/* ── ADMIN NOTICE (không có duyệt) ── */
+.observer-badge {
+  display: inline-flex; align-items: center; gap: 5px;
+  padding: 3px 10px; background: #fff3e0; color: var(--orange);
+  border: 1px solid #ffe0b2; border-radius: 20px; font-size: 11px; font-weight: 700;
+}
 </style>
 </head>
 <body>
 
-<div class="toast-container" id="toastContainer"></div>
+<!-- ── TOAST ── -->
+<div class="toast-wrap" id="toastWrap"></div>
 
-<!-- ===== LOGIN OVERLAY ===== -->
-<div id="loginOverlay">
-  <div class="login-box">
-    <div style="text-align:center; margin-bottom:16px;">
-      <div style="font-size:40px;">🦅</div>
-      <h2>BHX - KHAI BÁO BIỆT KÍCH</h2>
-      <div class="sub">Hệ thống khai báo bán hàng đội Biệt Kích</div>
+<!-- ── LOADING ── -->
+<div id="loadingOverlay">
+  <div class="spinner"></div>
+  <div class="loading-text" id="loadingText">Đang tải...</div>
+</div>
+
+<!-- ============================================================
+     LOGIN SCREEN
+     ============================================================ -->
+<div id="loginScreen">
+  <div class="login-card">
+    <div class="login-card-header">
+      <div class="eagle">🦅</div>
+      <h1>BHX — KHAI BÁO BIỆT KÍCH</h1>
+      <p>Hệ thống khai báo bán hàng đội Biệt Kích</p>
     </div>
+    <div class="login-card-body">
+      <!-- Role tabs -->
+      <div class="login-role-tabs">
+        <button class="login-role-tab active" id="tabQLTP" onclick="switchLoginRole('qltp')">👤 QLTP</button>
+        <button class="login-role-tab" id="tabAdmin" onclick="switchLoginRole('admin')">🔐 Admin</button>
+      </div>
 
-    <div class="form-group">
-      <label>Phân hệ truy cập</label>
-      <select id="loginRole" class="form-control" onchange="toggleLoginFields()">
-        <option value="" disabled selected>-- Chọn phân hệ --</option>
-        <option value="qltp">Quản Lý Tiên Phong (QLTP)</option>
-        <option value="admin">Admin Hệ Thống</option>
-      </select>
-    </div>
-
-    <div id="grpQLTP" style="display:none;">
-      <div class="form-group">
-        <label>Mã QLTP của bạn</label>
-        <div class="login-input-wrap">
-          <input type="text" id="loginCodeQLTP" class="form-control" placeholder="VD: 27506" autocomplete="off"
-            oninput="suggestQLTP(this.value)" onkeydown="if(event.key==='Enter') handleLogin()">
-          <div class="login-suggest hidden" id="qltpSuggest"></div>
+      <!-- QLTP fields -->
+      <div id="loginFieldQLTP">
+        <div class="form-group">
+          <label>Mã QLTP của bạn</label>
+          <div class="suggest-wrap">
+            <input type="text" id="inpQLTPCode" class="form-control"
+              placeholder="Nhập mã QLTP (VD: 27506)..."
+              oninput="onQLTPInput(this.value)"
+              onkeydown="if(event.key==='Enter') doLogin()">
+            <div class="suggest-list hidden" id="qltpSuggest"></div>
+          </div>
         </div>
-        <div id="qltpConfirm" style="margin-top:8px; display:none;">
-          <div style="background:#e8f5e9; border:1px solid #c3e6cb; border-radius:6px; padding:8px 12px; color:#155724; font-weight:600; font-size:13px;">
-            ✅ Xác nhận: <span id="qltpConfirmText"></span>
+        <div id="qltpPreview" style="display:none; margin-bottom:16px;">
+          <div style="background:var(--green-light);border:1px solid var(--green-mid);border-radius:var(--radius-sm);padding:10px 14px;color:var(--green-dark);font-weight:700;font-size:13px;">
+            ✅ <span id="qltpPreviewText"></span>
           </div>
         </div>
       </div>
-      <button class="btn-login" onclick="handleLogin()">VÀO HỆ THỐNG →</button>
-    </div>
 
-    <div id="grpAdmin" style="display:none;">
-      <div class="form-group">
-        <label>Mật khẩu Admin</label>
-        <input type="password" id="loginPassAdmin" class="form-control" placeholder="Nhập mật khẩu" onkeydown="if(event.key==='Enter') handleLogin()">
+      <!-- Admin fields -->
+      <div id="loginFieldAdmin" style="display:none;">
+        <div class="form-group">
+          <label>Mật khẩu Admin</label>
+          <input type="password" id="inpAdminPass" class="form-control"
+            placeholder="Nhập mật khẩu..."
+            onkeydown="if(event.key==='Enter') doLogin()">
+        </div>
       </div>
-      <button class="btn-login" onclick="handleLogin()">ĐĂNG NHẬP →</button>
-    </div>
 
-    <div class="login-hint" id="loginHint" style="display:none;"></div>
+      <button class="btn-login" onclick="doLogin()">VÀO HỆ THỐNG →</button>
+
+      <div id="loginError" style="margin-top:12px;color:var(--red);font-size:12.5px;font-weight:600;text-align:center;display:none;"></div>
+    </div>
   </div>
 </div>
 
-<!-- ===== APP CONTAINER ===== -->
-<div id="appContainer" class="blurred">
+<!-- ============================================================
+     APP SHELL
+     ============================================================ -->
+<div id="appShell">
+  <!-- HEADER -->
   <div class="header">
     <span class="header-logo">🦅</span>
-    <div class="header-title">BHX - KHAI BÁO BIỆT KÍCH</div>
-    <div class="sync-badge" id="syncBadge" title="Trạng thái đồng bộ Google Sheets">
+    <div class="header-title">
+      BHX — KHAI BÁO BIỆT KÍCH
+      <span id="headerSub"></span>
+    </div>
+    <div class="sync-pill" id="syncPill" title="Trạng thái kết nối Google Sheets">
       <div class="sync-dot" id="syncDot"></div>
       <span id="syncText">Offline</span>
     </div>
-    <div class="header-user" onclick="openChangePassModal()">
-      <span style="font-size:18px;">👤</span>
+    <div class="header-user" onclick="onHeaderUserClick()">
+      <div class="avatar">👤</div>
       <span id="headerUserName">...</span>
     </div>
   </div>
 
-  <div class="breadcrumb">Trang chủ &gt;&gt; <strong>Khai Báo Bán Hàng Đội Biệt Kích</strong></div>
-
-  <div class="role-bar">
-    <span id="roleStatusText">...</span>
-    <button class="btn btn-sm btn-danger" style="margin-left:auto;" onclick="logout()">⬅ Đăng xuất</button>
+  <!-- OFFLINE BANNER -->
+  <div class="offline-banner" id="offlineBanner">
+    ⚠ Không có kết nối Internet — Vui lòng kiểm tra mạng và tải lại trang
   </div>
 
+  <!-- ROLE BAR -->
+  <div class="role-bar">
+    <div class="role-pill" id="rolePill">...</div>
+    <span id="roleUserText" style="font-weight:600; color:var(--gray-800);"></span>
+    <div id="adminObserverBadge" style="display:none;">
+      <span class="observer-badge">👁 Chế độ Quan sát — Không phê duyệt</span>
+    </div>
+    <button class="btn-logout" onclick="doLogout()">⬅ Đăng xuất</button>
+  </div>
+
+  <!-- MAIN -->
   <div class="main">
+
     <!-- FILTER -->
-    <div class="filter-area">
+    <div class="card filter-card">
       <div class="filter-row">
         <div class="filter-group">
-          <label>Tìm Siêu thị</label>
-          <div class="search-drop-wrap" style="width: 220px;">
-            <input type="text" id="filterSieuthi" placeholder="Gõ Mã hoặc Tên ST..." class="form-control" autocomplete="off"
-              onfocus="filterDrop('filterST', this.value)" oninput="filterDrop('filterST', this.value)">
-            <div class="dropdown-list hidden" id="dropFilterst-list"></div>
-          </div>
+          <label>Mã Siêu Thị</label>
+          <input type="text" id="fltST" class="form-control"
+            placeholder="Nhập mã siêu thị..." style="min-width:160px;"
+            oninput="applyFilter()">
         </div>
-        <div class="filter-group"><label>Từ ngày</label><input type="date" id="filterTuNgay" class="form-control"></div>
-        <div class="filter-group"><label>Đến ngày</label><input type="date" id="filterDenNgay" class="form-control"></div>
         <div class="filter-group">
-          <label>Trạng thái</label>
-          <select id="filterStatus" class="form-control">
-            <option value="">-- Tất cả --</option>
-            <option value="pending">Chờ duyệt</option>
-            <option value="approved">Đã duyệt</option>
-            <option value="rejected">Từ chối</option>
-          </select>
+          <label>Từ ngày</label>
+          <input type="date" id="fltFrom" class="form-control" oninput="applyFilter()">
         </div>
-        <div class="filter-group" style="justify-content:flex-end;">
+        <div class="filter-group">
+          <label>Đến ngày</label>
+          <input type="date" id="fltTo" class="form-control" oninput="applyFilter()">
+        </div>
+        <div class="filter-group">
           <label>&nbsp;</label>
           <div style="display:flex;gap:6px;">
-            <button class="btn btn-search" onclick="loadTable()">🔍 Lọc</button>
-            <button class="btn btn-primary" id="btnTaoMoi" onclick="openCreateModal()">➕ Tạo mới</button>
-            <button class="btn btn-sm" style="background:#17a2b8;color:white;" onclick="syncFromSheets()" title="Tải dữ liệu mới từ Google Sheets">🔄 Sync</button>
+            <button class="btn btn-green" onclick="applyFilter()">🔍 Lọc</button>
+            <button class="btn btn-blue" id="btnCreate" onclick="openCreateModal()">➕ Tạo mới</button>
+            <button class="btn btn-gray btn-sm" onclick="refreshData()" title="Tải lại dữ liệu từ Google Sheets">🔄 Sync</button>
           </div>
         </div>
       </div>
@@ -280,42 +668,41 @@
 
     <!-- ACTION BAR -->
     <div class="action-bar">
-      <button class="btn btn-export" onclick="exportExcel()">📥 Export (.xlsx)</button>
-      <button class="btn btn-import" id="btnImportKhaiBao" onclick="openImportModal()">📤 Import Khai Báo</button>
-      <a href="#" class="btn-link" onclick="downloadTemplateExcel()">⬇ Tải Form Mẫu</a>
-      <button class="btn btn-danger" id="btnBulkDelete" style="display:none;" onclick="bulkDeleteRecords()">🗑 Xóa đã chọn</button>
+      <button class="btn btn-green btn-sm" onclick="exportExcel()">📥 Export Excel</button>
+      <button class="btn btn-blue btn-sm" id="btnImport" onclick="openImportModal()">📤 Import</button>
+      <a href="#" style="font-size:12px;color:var(--blue);font-weight:700;text-decoration:none;" onclick="downloadTemplate()">⬇ Tải mẫu</a>
 
-      <div style="margin-left:auto; display:flex; gap:6px; flex-wrap:wrap;">
-        <button class="btn btn-secondary btn-sm" onclick="openHistoryModal()">📜 Lịch Sử</button>
-        <button class="btn btn-sm" style="background:#ff6f00;color:white;" onclick="openManualListModal()">⚠ DS Nhập Tay</button>
-        <div id="adminButtons" style="display:none; gap:6px;">
-          <button class="btn btn-warning btn-sm" style="color:black;" onclick="openMasterDataModal()">⚙ Master Data</button>
+      <div class="action-bar-right">
+        <button class="btn btn-gray btn-sm" onclick="openHistoryModal()">📜 Lịch Sử</button>
+        <div id="adminActionsWrap" style="display:none;">
+          <button class="btn btn-sm" style="background:#e65100;color:#fff;" onclick="openMasterModal()">⚙ Master Data</button>
         </div>
       </div>
     </div>
 
     <!-- TABLE -->
-    <div class="table-area">
-      <div style="padding:8px 16px; background:#f8f9fa; border-bottom:1px solid #ddd; display:flex; align-items:center; gap:8px;">
-        <input type="checkbox" id="selectAll" onchange="toggleSelectAll()">
-        <label for="selectAll" style="font-weight:bold; font-size:12px;">Chọn tất cả</label>
-        <span id="selectedCount" style="color:var(--blue); font-size:12px;"></span>
-        <span id="totalCount" style="margin-left:auto; color:#888; font-size:12px;"></span>
+    <div class="card table-card">
+      <div class="table-topbar">
+        <input type="checkbox" id="checkAll" onchange="toggleSelectAll(this.checked)">
+        <label for="checkAll">Chọn tất cả</label>
+        <span id="selectedInfo" style="color:var(--blue);font-size:12px;font-weight:700;"></span>
+        <button class="btn btn-red btn-sm" id="btnBulkDel" style="display:none;" onclick="bulkDelete()">🗑 Xóa đã chọn</button>
+        <span class="record-count" id="recordCount"></span>
       </div>
-      <div class="table-container">
+      <div class="tbl-wrap">
         <table id="mainTable">
           <thead>
             <tr>
-              <th style="width:36px; text-align:center;"></th>
+              <th></th>
               <th>#</th>
               <th>QLTP</th>
-              <th>Siêu thị</th>
+              <th>Siêu Thị</th>
               <th>Ngày BK</th>
               <th>Giờ (24h)</th>
-              <th>DS Sản phẩm</th>
-              <th>DS Nhân viên</th>
-              <th>Trạng thái</th>
-              <th>Thao tác</th>
+              <th>Sản Phẩm</th>
+              <th>Nhân Viên</th>
+              <th>Ngày Tạo</th>
+              <th>Thao Tác</th>
             </tr>
           </thead>
           <tbody id="tableBody"></tbody>
@@ -324,376 +711,334 @@
     </div>
   </div>
 
-  <div class="footer">Mọi vấn đề xin liên hệ <strong>Hải Phú - 268789</strong> qua BCNB</div>
-</div>
-
-<!-- ===== MODALS ===== -->
-
-<!-- CHANGE PASS (Admin only) -->
-<div class="modal-overlay hidden" id="changePassModal">
-  <div class="modal" style="width:400px;">
-    <div class="modal-header"><h3>🔑 Đổi mật khẩu Admin</h3><button class="modal-close" onclick="closeModal('changePassModal')">×</button></div>
-    <div class="modal-body">
-      <div class="form-group"><label>Mật khẩu cũ</label><input type="password" id="cpOld" class="form-control"></div>
-      <div class="form-group"><label>Mật khẩu mới</label><input type="password" id="cpNew" class="form-control"></div>
-    </div>
-    <div class="modal-footer">
-      <button class="btn btn-primary" onclick="submitChangePass()">Lưu</button>
-      <button class="btn btn-secondary" onclick="closeModal('changePassModal')">Hủy</button>
-    </div>
+  <div class="footer">
+    Mọi vấn đề xin liên hệ <strong>Hải Phú — 268789</strong> qua BCNB
   </div>
 </div>
 
-<!-- CREATE / EDIT MODAL -->
-<div class="modal-overlay hidden" id="createModal">
+<!-- ============================================================
+     MODALS
+     ============================================================ -->
+
+<!-- CREATE / EDIT -->
+<div class="modal-overlay hidden" id="modalCreate">
   <div class="modal modal-lg">
     <div class="modal-header">
-      <h3 id="createModalTitle">➕ Khai báo Biệt Kích</h3>
-      <button class="modal-close" onclick="closeModal('createModal')">×</button>
+      <h3 id="createTitle">➕ Tạo Khai Báo Biệt Kích</h3>
+      <button class="modal-close" onclick="closeModal('modalCreate')">×</button>
     </div>
     <div class="modal-body">
-
-      <!-- Siêu thị -->
+      <!-- Siêu thị (single select theo mã) -->
       <div class="form-group">
-        <label>Siêu thị <span style="color:red">*</span></label>
-        <div class="search-drop-wrap" id="dropSieuthi">
-          <input class="search-drop-input" id="inputSieuthi" type="text" placeholder="Gõ mã hoặc tên siêu thị..." autocomplete="off"
-            oninput="filterDrop('sieuthi',this.value)" onfocus="filterDrop('sieuthi',this.value)">
-          <div class="dropdown-list hidden" id="dropSieuthi-list"></div>
-          <div class="selected-tags" id="sieuthiSelected"></div>
+        <label style="font-weight:700;font-size:12px;color:var(--gray-600);text-transform:uppercase;letter-spacing:.4px;display:block;margin-bottom:5px;">
+          Siêu Thị <span style="color:red">*</span>
+        </label>
+        <div class="multi-select-wrap">
+          <input class="ms-input" id="inpST" type="text"
+            placeholder="Nhập mã siêu thị để tìm..."
+            oninput="msSearch('st', this.value)"
+            onfocus="msSearch('st', this.value)"
+            autocomplete="off">
+          <div class="ms-dropdown hidden" id="ddST"></div>
         </div>
+        <div class="tags-wrap" id="tagsST"></div>
       </div>
 
-      <!-- [FIX] Ngày & Giờ 24H — Dùng select thay input type=time để tránh AM/PM trên mọi trình duyệt -->
+      <!-- Ngày + Giờ -->
       <div class="form-row-3">
         <div class="form-group">
-          <label>Ngày Biệt Kích <span style="color:red">*</span></label>
-          <input type="date" id="formNgay" class="form-control">
+          <label style="font-weight:700;font-size:12px;color:var(--gray-600);text-transform:uppercase;letter-spacing:.4px;display:block;margin-bottom:5px;">
+            Ngày BK <span style="color:red">*</span>
+          </label>
+          <input type="date" id="inpNgay" class="form-control">
         </div>
         <div class="form-group">
-          <label>Từ giờ <small>(05:00–22:00)</small></label>
-          <div class="time-select-wrap">
-            <select id="formTuGioH" class="form-control">
-              <option value="">--</option>
-              <option value="05">05</option><option value="06">06</option><option value="07">07</option>
-              <option value="08">08</option><option value="09">09</option><option value="10">10</option>
-              <option value="11">11</option><option value="12">12</option><option value="13">13</option>
-              <option value="14">14</option><option value="15">15</option><option value="16">16</option>
-              <option value="17">17</option><option value="18">18</option><option value="19">19</option>
-              <option value="20">20</option><option value="21">21</option><option value="22">22</option>
-            </select>
-            <span class="time-colon">:</span>
-            <select id="formTuGioM" class="form-control">
-              <option value="00">00</option><option value="15">15</option>
-              <option value="30">30</option><option value="45">45</option>
-            </select>
-          </div>
+          <label style="font-weight:700;font-size:12px;color:var(--gray-600);text-transform:uppercase;letter-spacing:.4px;display:block;margin-bottom:5px;">
+            Từ Giờ <small style="font-weight:400;">(05:00–22:00)</small>
+          </label>
+          <input type="time" id="inpTuGio" class="form-control" min="05:00" max="22:00" step="900">
         </div>
         <div class="form-group">
-          <label>Đến giờ <small>(05:00–22:00)</small></label>
-          <div class="time-select-wrap">
-            <select id="formDenGioH" class="form-control">
-              <option value="">--</option>
-              <option value="05">05</option><option value="06">06</option><option value="07">07</option>
-              <option value="08">08</option><option value="09">09</option><option value="10">10</option>
-              <option value="11">11</option><option value="12">12</option><option value="13">13</option>
-              <option value="14">14</option><option value="15">15</option><option value="16">16</option>
-              <option value="17">17</option><option value="18">18</option><option value="19">19</option>
-              <option value="20">20</option><option value="21">21</option><option value="22">22</option>
-            </select>
-            <span class="time-colon">:</span>
-            <select id="formDenGioM" class="form-control">
-              <option value="00">00</option><option value="15">15</option>
-              <option value="30">30</option><option value="45">45</option>
-            </select>
-          </div>
+          <label style="font-weight:700;font-size:12px;color:var(--gray-600);text-transform:uppercase;letter-spacing:.4px;display:block;margin-bottom:5px;">
+            Đến Giờ <small style="font-weight:400;">(05:00–22:00)</small>
+          </label>
+          <input type="time" id="inpDenGio" class="form-control" min="05:00" max="22:00" step="900">
         </div>
       </div>
 
-      <!-- [CHANGED] Sản phẩm: tag-based multi-select (giống DS Nhân viên) -->
+      <!-- Sản phẩm (multi select theo mã) -->
       <div class="form-group">
-        <label>Danh sách Sản phẩm <span style="color:red">*</span>
-          <small style="font-weight:400;color:#888;"> — Tìm và chọn, có thể chọn nhiều</small>
+        <label style="font-weight:700;font-size:12px;color:var(--gray-600);text-transform:uppercase;letter-spacing:.4px;display:block;margin-bottom:5px;">
+          Sản Phẩm <span style="color:red">*</span> — có thể chọn nhiều
         </label>
-        <div class="search-drop-wrap" id="dropSanpham">
-          <input class="search-drop-input" id="inputSanpham" type="text"
-            placeholder="Gõ Mã hoặc Tên sản phẩm để tìm..." autocomplete="off"
-            oninput="filterDrop('sanpham',this.value)"
-            onfocus="filterDrop('sanpham',this.value)">
-          <div class="dropdown-list hidden" id="dropSanpham-list"></div>
-          <div class="selected-tags" id="sanphamSelected"></div>
+        <div class="multi-select-wrap">
+          <input class="ms-input" id="inpSP" type="text"
+            placeholder="Nhập mã sản phẩm để tìm..."
+            oninput="msSearch('sp', this.value)"
+            onfocus="msSearch('sp', this.value)"
+            autocomplete="off">
+          <div class="ms-dropdown hidden" id="ddSP"></div>
         </div>
+        <div class="tags-wrap" id="tagsSP"></div>
       </div>
 
-      <!-- Nhân viên -->
+      <!-- Nhân viên (multi select theo mã) -->
       <div class="form-group">
-        <label>DS Nhân viên áp dụng <span style="color:red">*</span></label>
-        <div class="search-drop-wrap" id="dropNhanvien">
-          <input class="search-drop-input" id="inputNhanvien" type="text" placeholder="Gõ mã NV hoặc tên..." autocomplete="off"
-            oninput="filterDrop('nhanvien',this.value)" onfocus="filterDrop('nhanvien',this.value)">
-          <div class="dropdown-list hidden" id="dropNhanvien-list"></div>
-          <div class="selected-tags" id="nhanvienSelected"></div>
+        <label style="font-weight:700;font-size:12px;color:var(--gray-600);text-transform:uppercase;letter-spacing:.4px;display:block;margin-bottom:5px;">
+          Nhân Viên <span style="color:red">*</span> — có thể chọn nhiều
+        </label>
+        <div class="multi-select-wrap">
+          <input class="ms-input" id="inpNV" type="text"
+            placeholder="Nhập mã nhân viên để tìm..."
+            oninput="msSearch('nv', this.value)"
+            onfocus="msSearch('nv', this.value)"
+            autocomplete="off">
+          <div class="ms-dropdown hidden" id="ddNV"></div>
         </div>
-      </div>
-
-      <div class="manual-notice" id="manualNotice">
-        ⚠️ <strong>Bạn đang có dữ liệu nhập tay!</strong><br>
-        Sau khi lưu xong, vui lòng vào <strong>"DS Nhập Tay"</strong> → sao chép nội dung → gửi cho
-        <strong>Hải Phú - 268789</strong> qua <strong>BCNB</strong> để được cập nhật chính thức.
+        <div class="tags-wrap" id="tagsNV"></div>
       </div>
     </div>
     <div class="modal-footer">
-      <button class="btn btn-primary" onclick="submitForm()">💾 Lưu & Gửi Duyệt</button>
-      <button class="btn btn-secondary" onclick="closeModal('createModal')">Đóng</button>
+      <button class="btn btn-green" onclick="submitCreate()">💾 Lưu Khai Báo</button>
+      <button class="btn btn-gray" onclick="closeModal('modalCreate')">Đóng</button>
     </div>
   </div>
 </div>
 
-<!-- IMPORT MODAL -->
-<div class="modal-overlay hidden" id="importModal">
-  <div class="modal modal-xl">
-    <div class="modal-header"><h3>📤 Import Khai Báo (.xlsx)</h3><button class="modal-close" onclick="closeModal('importModal')">×</button></div>
-    <div class="modal-body">
-      <div style="background:#e8f4f8; padding:10px; border-left:4px solid var(--blue); margin-bottom:15px;">
-        Cột: <b>Siêu thị | Ngày (DD/MM/YYYY) | Từ giờ (HH:MM) | Đến giờ (HH:MM) | Mã SP;Mã SP2... | Tên SP;Tên SP2... | DS NV (cách nhau ;)</b>
-      </div>
-      <div class="upload-zone" onclick="document.getElementById('fileImportInput').click()">
-        <input type="file" id="fileImportInput" accept=".xlsx,.xls" style="display:none" onchange="handleExcelUpload(event)">
-        <div style="font-size:36px; color:var(--blue); margin-bottom:8px;">📄</div>
-        <div style="font-weight:bold;">Kéo thả hoặc click chọn file Excel (.xlsx)</div>
-      </div>
-      <div id="bulkPreview" style="margin-top:15px; max-height:300px; overflow-y:auto;"></div>
+<!-- DETAIL -->
+<div class="modal-overlay hidden" id="modalDetail">
+  <div class="modal modal-lg">
+    <div class="modal-header">
+      <h3>🔍 Chi Tiết Khai Báo</h3>
+      <button class="modal-close" onclick="closeModal('modalDetail')">×</button>
     </div>
+    <div class="modal-body" id="detailBody"></div>
     <div class="modal-footer">
-      <button class="btn btn-success" id="btnImportSubmit" onclick="submitBulkImport()" disabled>✅ Tiến hành Import</button>
-      <button class="btn btn-secondary" onclick="closeModal('importModal')">Hủy</button>
+      <button class="btn btn-gray" onclick="closeModal('modalDetail')">Đóng</button>
     </div>
   </div>
 </div>
 
-<!-- MASTER DATA MODAL (Admin only) -->
-<div class="modal-overlay hidden" id="masterDataModal">
+<!-- IMPORT -->
+<div class="modal-overlay hidden" id="modalImport">
   <div class="modal modal-xl">
     <div class="modal-header">
-      <h3>⚙ Master Data & Import</h3>
-      <button class="modal-close" onclick="closeModal('masterDataModal')">×</button>
+      <h3>📤 Import Khai Báo (.xlsx)</h3>
+      <button class="modal-close" onclick="closeModal('modalImport')">×</button>
+    </div>
+    <div class="modal-body">
+      <div style="background:var(--blue-light);padding:10px 14px;border-left:4px solid var(--blue);border-radius:4px;margin-bottom:16px;font-size:12.5px;">
+        <b>Định dạng cột:</b> Mã ST | Ngày (DD/MM/YYYY) | Từ giờ (HH:MM) | Đến giờ (HH:MM) | Mã SP (cách nhau ;) | Mã NV (cách nhau ;)
+      </div>
+      <div class="upload-zone" onclick="document.getElementById('fileImport').click()">
+        <input type="file" id="fileImport" accept=".xlsx,.xls" style="display:none" onchange="onFileImport(event)">
+        <div class="icon">📄</div>
+        <p>Kéo thả hoặc click để chọn file Excel (.xlsx)</p>
+      </div>
+      <div id="importPreview" style="margin-top:14px;max-height:280px;overflow-y:auto;"></div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-green" id="btnDoImport" onclick="doImport()" disabled>✅ Tiến Hành Import</button>
+      <button class="btn btn-gray" onclick="closeModal('modalImport')">Hủy</button>
+    </div>
+  </div>
+</div>
+
+<!-- MASTER DATA (Admin) -->
+<div class="modal-overlay hidden" id="modalMaster">
+  <div class="modal modal-xl">
+    <div class="modal-header">
+      <h3>⚙ Master Data & Cấu Hình</h3>
+      <button class="modal-close" onclick="closeModal('modalMaster')">×</button>
     </div>
     <div class="modal-body">
       <div class="tabs">
-        <button class="tab-btn active" onclick="switchMasterTab('importData')">📥 Import Data</button>
-        <button class="tab-btn" onclick="switchMasterTab('sheetsConfig')">🔗 Google Sheets</button>
-        <button class="tab-btn" onclick="switchMasterTab('users')">👤 Quản lý User (<span id="countUsers">0</span>)</button>
-        <button class="tab-btn" onclick="switchMasterTab('sieuthi')">🏪 Siêu thị (<span id="countSieuthi">0</span>)</button>
-        <button class="tab-btn" onclick="switchMasterTab('sanpham')">📦 Sản phẩm (<span id="countSanpham">0</span>)</button>
-        <button class="tab-btn" onclick="switchMasterTab('nhanvien')">👥 Nhân viên (<span id="countNhanvien">0</span>)</button>
+        <button class="tab-btn active" onclick="switchTab('import')">📥 Import Data</button>
+        <button class="tab-btn" onclick="switchTab('sheets')">🔗 Google Sheets</button>
+        <button class="tab-btn" onclick="switchTab('users')">👤 QLTP (<span id="cntQLTP">0</span>)</button>
+        <button class="tab-btn" onclick="switchTab('sieuthi')">🏪 Siêu Thị (<span id="cntST">0</span>)</button>
+        <button class="tab-btn" onclick="switchTab('sanpham')">📦 Sản Phẩm (<span id="cntSP">0</span>)</button>
+        <button class="tab-btn" onclick="switchTab('nhanvien')">👥 Nhân Viên (<span id="cntNV">0</span>)</button>
+        <button class="tab-btn" onclick="switchTab('pass')">🔑 Đổi Mật Khẩu</button>
       </div>
 
-      <!-- Tab: Import Data -->
-      <div id="masterTabImportData" class="tab-content active">
-        <div class="import-master-card">
-          <a href="#" class="btn-link dl-master-btn" onclick="dlMasterTpl('phanbo')">⬇ Tải Mẫu</a>
+      <!-- Tab: Import -->
+      <div id="tabImport" class="tab-content active">
+        <div class="master-card">
           <h4>🏪 File Phân Bổ (QLTP + Siêu Thị)</h4>
-          <div class="col-hint">Cột cần thiết: <span>MST</span> <span>Tên ST</span> <span>QLTP tháng 4.2026 (tên rút gọn)</span><br><small>📌 Format cột QLTP: <strong>[Mã] - [Tên]</strong> (VD: 27506 - Bá Thành)</small></div>
-          <div class="data-stats"><span class="stat-chip" id="statQLTP">QLTP: 0</span><span class="stat-chip" id="statST">Siêu thị: 0</span></div>
-          <div style="margin-top:10px;"><label class="btn btn-import btn-sm" style="cursor:pointer;margin:0;">📂 Chọn File Phân Bổ <input type="file" accept=".xlsx,.xls" style="display:none" onchange="importMasterFile('phanbo', this)"></label><span id="statusPhanBo" style="font-size:12px;color:#888;margin-left:8px;"></span></div>
+          <div class="col-hint">Cột cần có: <span class="chip">MST</span> <span class="chip">Tên ST</span> <span class="chip">QLTP (format: Mã - Tên)</span></div>
+          <label class="btn btn-blue btn-sm" style="cursor:pointer;">
+            📂 Chọn File
+            <input type="file" accept=".xlsx,.xls" style="display:none" onchange="importMaster('phanbo',this)">
+          </label>
+          <span id="stPhanBoStatus" style="font-size:12px;color:var(--gray-600);margin-left:8px;"></span>
+          <div class="stat-row"><span class="stat-chip" id="chipQLTP">QLTP: 0</span><span class="stat-chip" id="chipST">Siêu thị: 0</span></div>
         </div>
-        <div class="import-master-card">
-          <a href="#" class="btn-link dl-master-btn" onclick="dlMasterTpl('fmcg')">⬇ Tải Mẫu</a>
-          <h4>🛒 File Sản Phẩm FMCG</h4>
-          <div class="col-hint">Cột cần thiết: <span>Mã sản phẩm</span> <span>Tên sản phẩm</span></div>
-          <div class="data-stats"><span class="stat-chip" id="statFMCG">SP FMCG: 0</span></div>
-          <div style="margin-top:10px;"><label class="btn btn-import btn-sm" style="cursor:pointer;margin:0;">📂 Chọn File FMCG <input type="file" accept=".xlsx,.xls" style="display:none" onchange="importMasterFile('fmcg', this)"></label><span id="statusFMCG" style="font-size:12px;color:#888;margin-left:8px;"></span></div>
-        </div>
-        <!-- Cập nhật chip thống kê (tìm class data-stats) -->
-<div class="data-stats">
-  <span class="stat-chip" id="statQLTP">QLTP: 0</span>
-  <span class="stat-chip" id="statST">Siêu thị: 0</span>
-  <span class="stat-chip" id="statFMCG">SP FMCG: 0</span>
-  <span class="stat-chip" id="statFresh">SP Fresh: 0</span> <!-- Dòng MỚI -->
-</div>
 
-<!-- Thêm Card Import Fresh (đặt dưới thẻ Import FMCG) -->
-<div class="import-master-card">
-  <a href="#" class="btn-link dl-master-btn" onclick="dlMasterTpl('fresh')">⬇ Tải Mẫu</a>
-  <h4>🥬 File Sản Phẩm Fresh (Hàng Tươi Sống)</h4>
-  <div class="col-hint">Cột cần thiết: <span>Mã sản phẩm</span> <span>Tên sản phẩm</span></div>
-  <div style="margin-top:10px;">
-    <label class="btn btn-import btn-sm" style="cursor:pointer;margin:0;">
-      📂 Chọn File Fresh 
-      <input type="file" accept=".xlsx,.xls" style="display:none" onchange="importMasterFile('fresh', this)">
-    </label>
-    <span id="statusFresh" style="font-size:12px;color:#888;margin-left:8px;"></span>
-  </div>
-</div>
-        <div class="import-master-card">
-          <a href="#" class="btn-link dl-master-btn" onclick="dlMasterTpl('nhanvien')">⬇ Tải Mẫu</a>
-          <h4>👥 File Danh Sách Nhân Viên</h4>
-          <div class="col-hint">Cột cần thiết: <span>Mã Nhân Viên</span> <span>Tên Nhân Viên</span> <span>Mã Siêu Thị</span><br><small>📌 Dòng tiêu đề ở hàng 4</small></div>
-          <div class="data-stats"><span class="stat-chip" id="statNV">NV: 0</span></div>
-          <div style="margin-top:10px;"><label class="btn btn-import btn-sm" style="cursor:pointer;margin:0;">📂 Chọn File Nhân Viên <input type="file" accept=".xlsx,.xls" style="display:none" onchange="importMasterFile('nhanvien', this)"></label><span id="statusNV" style="font-size:12px;color:#888;margin-left:8px;"></span></div>
+        <div class="master-card">
+          <h4>📦 File Sản Phẩm FMCG</h4>
+          <div class="col-hint">Cột cần có: <span class="chip">Mã sản phẩm</span> <span class="chip">Tên sản phẩm</span></div>
+          <label class="btn btn-blue btn-sm" style="cursor:pointer;">
+            📂 Chọn File
+            <input type="file" accept=".xlsx,.xls" style="display:none" onchange="importMaster('fmcg',this)">
+          </label>
+          <span id="stFMCGStatus" style="font-size:12px;color:var(--gray-600);margin-left:8px;"></span>
+          <div class="stat-row"><span class="stat-chip" id="chipFMCG">FMCG: 0</span></div>
         </div>
-        <div style="background:#e8f5e9;border:1px solid #c3e6cb;border-radius:6px;padding:12px;font-size:12px;color:#2e7d32;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;">
-          <span>✅ Sau khi import xong, nhấn nút để đẩy toàn bộ master data lên Google Sheets — các QLTP ở máy khác sẽ tự đồng bộ khi đăng nhập.</span>
-          <button class="btn btn-success btn-sm" onclick="pushMasterToSheets()">📤 Đẩy Master Data lên Sheets</button>
+
+        <div class="master-card">
+          <h4>🥬 File Sản Phẩm Fresh</h4>
+          <div class="col-hint">Cột cần có: <span class="chip">Mã sản phẩm</span> <span class="chip">Tên sản phẩm</span></div>
+          <label class="btn btn-blue btn-sm" style="cursor:pointer;">
+            📂 Chọn File
+            <input type="file" accept=".xlsx,.xls" style="display:none" onchange="importMaster('fresh',this)">
+          </label>
+          <span id="stFreshStatus" style="font-size:12px;color:var(--gray-600);margin-left:8px;"></span>
+          <div class="stat-row"><span class="stat-chip" id="chipFresh">Fresh: 0</span></div>
+        </div>
+
+        <div class="master-card">
+          <h4>👥 File Nhân Viên</h4>
+          <div class="col-hint">Cột cần có: <span class="chip">Mã Nhân Viên</span> <span class="chip">Tên Nhân Viên</span> <span class="chip">Mã Siêu Thị</span> — Dòng tiêu đề ở hàng 4</div>
+          <label class="btn btn-blue btn-sm" style="cursor:pointer;">
+            📂 Chọn File
+            <input type="file" accept=".xlsx,.xls" style="display:none" onchange="importMaster('nhanvien',this)">
+          </label>
+          <span id="stNVStatus" style="font-size:12px;color:var(--gray-600);margin-left:8px;"></span>
+          <div class="stat-row"><span class="stat-chip" id="chipNV">NV: 0</span></div>
+        </div>
+
+        <div style="background:var(--green-light);border:1px solid var(--green-mid);border-radius:var(--radius);padding:14px 16px;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;">
+          <div style="font-size:13px;color:var(--green-dark);font-weight:600;">
+            ✅ Sau khi import xong → đẩy toàn bộ lên Google Sheets để các QLTP đồng bộ
+          </div>
+          <button class="btn btn-green btn-sm" onclick="pushMasterToSheets()">📤 Đẩy Master Data lên Sheets</button>
         </div>
       </div>
 
-      <!-- [CHANGED] Tab: Google Sheets Config — chỉ cần 1 URL -->
-      <div id="masterTabSheetsConfig" class="tab-content">
-        <div class="sheets-config-card">
-          <h4>🔗 Kết nối qua Google Apps Script</h4>
-          <p style="font-size:12px;color:#555;margin-bottom:12px;">
-            Chỉ cần 1 URL Web App — dùng cho cả đọc lẫn ghi. Không cần API Key hay Spreadsheet ID riêng.
-          </p>
+      <!-- Tab: Sheets Config -->
+      <div id="tabSheets" class="tab-content">
+        <div class="config-card">
+          <h4>🔗 Kết Nối Google Apps Script</h4>
+          <p style="font-size:12px;color:#555;margin-bottom:14px;">Chỉ cần 1 URL Web App duy nhất — dùng cho cả đọc lẫn ghi.</p>
           <div class="form-group">
-            <label>Web App URL (Google Apps Script)</label>
-            <input type="text" id="cfgWebAppUrl" class="form-control" placeholder="https://script.google.com/macros/s/.../exec">
+            <label style="font-weight:700;font-size:12px;display:block;margin-bottom:6px;">Web App URL</label>
+            <input type="text" id="cfgWebUrl" class="form-control"
+              placeholder="https://script.google.com/macros/s/.../exec">
           </div>
-          <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px;">
-            <button class="btn btn-primary" onclick="saveSheetConfig()">💾 Lưu cấu hình</button>
-            <button class="btn btn-success" onclick="testSheetConnection()">🔌 Test kết nối</button>
+          <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:10px;">
+            <button class="btn btn-blue btn-sm" onclick="saveWebUrl()">💾 Lưu URL</button>
+            <button class="btn btn-green btn-sm" onclick="testConnection()">🔌 Test Kết Nối</button>
           </div>
-          <div id="sheetTestResult" style="margin-top:10px;font-size:12px;"></div>
+          <div id="connTestResult" style="margin-top:10px;font-size:12.5px;"></div>
         </div>
 
-        <!-- Hướng dẫn setup -->
-        <div style="background:#f8f9fa;border:1px solid #ddd;border-radius:8px;padding:16px;">
-          <h4 style="margin-bottom:12px;color:#333;">📖 Hướng dẫn Setup (3 bước)</h4>
-          <div style="font-size:12px;line-height:2.2;color:#444;">
-
-            <b>BƯỚC 1 — Tạo Google Spreadsheet</b><br>
-            Vào <a href="https://sheets.google.com" target="_blank">sheets.google.com</a> → Tạo file mới.<br>
-            Đặt tên file tùy ý (VD: <i>BHX Biệt Kích DB</i>). Giữ nguyên, không cần tạo thêm sheet con.<br><br>
-
-            <b>BƯỚC 2 — Tạo Apps Script & Deploy</b><br>
-            Trong Spreadsheet → menu <b>Tiện ích mở rộng (Extensions) → Apps Script</b><br>
-            Xóa toàn bộ code cũ → nhấn nút bên dưới để copy code mới → dán vào → <b>Lưu (Ctrl+S)</b><br>
-            Nhấn <b>Triển khai (Deploy) → Triển khai mới → Web App</b><br>
-            &nbsp;&nbsp;• <b>Thực thi với tư cách:</b> Tôi (Me)<br>
-            &nbsp;&nbsp;• <b>Ai có quyền truy cập:</b> Bất kỳ ai (Anyone)<br>
-            → <b>Triển khai</b> → Cấp quyền nếu được hỏi → Copy URL Web App<br><br>
-
-            <b>BƯỚC 3 — Dán URL vào ô bên trên & Lưu</b><br>
-            Dán URL vừa copy vào ô "Web App URL" → nhấn "Lưu cấu hình" → "Test kết nối".<br>
-            Khi test thành công, nhấn <b>"Đẩy Master Data lên Sheets"</b> để đẩy dữ liệu lên.
-          </div>
-          <div style="margin-top:12px;display:flex;gap:8px;flex-wrap:wrap;">
-            <button class="btn btn-secondary btn-sm" onclick="copyAppsScriptCode()">📋 Copy Apps Script Code</button>
-          </div>
+        <div class="step-box">
+          <b>📖 HƯỚNG DẪN SETUP (3 BƯỚC)</b><br><br>
+          <b>BƯỚC 1 — Tạo Google Spreadsheet</b><br>
+          Vào <a href="https://sheets.google.com" target="_blank" style="color:var(--blue);">sheets.google.com</a> → Tạo file mới. Đặt tên tùy ý (VD: BHX Biệt Kích DB).<br><br>
+          <b>BƯỚC 2 — Tạo Apps Script & Deploy</b><br>
+          Trong Spreadsheet → menu <b>Tiện ích mở rộng → Apps Script</b><br>
+          Xóa code cũ → Copy code mới (nút bên dưới) → Dán vào → <b>Lưu (Ctrl+S)</b><br>
+          Nhấn <b>Triển khai → Triển khai mới → Web App</b><br>
+          &nbsp;&nbsp;• Thực thi với tư cách: <b>Tôi (Me)</b><br>
+          &nbsp;&nbsp;• Ai có quyền truy cập: <b>Bất kỳ ai (Anyone)</b><br>
+          → Triển khai → Cấp quyền → Copy URL Web App<br><br>
+          <b>BƯỚC 3 — Dán URL & Test</b><br>
+          Dán URL vào ô trên → Lưu → Test kết nối → Đẩy Master Data.
+        </div>
+        <div style="margin-top:12px;">
+          <button class="btn btn-gray btn-sm" onclick="copyGASCode()">📋 Copy Apps Script Code</button>
         </div>
       </div>
 
-      <!-- Tab: Users -->
-      <div id="masterTabUsers" class="tab-content">
-        <div style="display:flex;gap:8px;margin-bottom:10px;align-items:center;flex-wrap:wrap;background:#f8f9fa;padding:8px;border-radius:6px;border:1px solid #ddd;">
-          <input type="text" id="searchUsers" class="form-control" placeholder="🔍 Tìm kiếm User..." oninput="renderMasterList('users')" style="flex:1;min-width:200px;border-color:var(--blue);">
+      <!-- Tab: Users (QLTP) -->
+      <div id="tabUsers" class="tab-content">
+        <div style="display:flex;gap:8px;margin-bottom:10px;flex-wrap:wrap;">
+          <input type="text" id="searchUsers" class="form-control" placeholder="🔍 Tìm theo mã..." oninput="renderMasterList('users')" style="flex:1;min-width:160px;">
+          <input type="text" id="newUserCode" class="form-control" placeholder="Mã QLTP" style="width:120px;">
+          <input type="text" id="newUserName" class="form-control" placeholder="Họ Tên" style="flex:1;min-width:130px;">
+          <button class="btn btn-green btn-sm" onclick="addUser()">➕ Thêm</button>
         </div>
-        <div style="display:flex;gap:8px;margin-bottom:10px;align-items:center;flex-wrap:wrap;">
-          <input type="text" id="newUserCode" class="form-control" placeholder="Mã QLTP (27506)" style="width:160px;">
-          <input type="text" id="newUserName" class="form-control" placeholder="Họ Tên" style="flex:1;min-width:120px;">
-          <button class="btn btn-success" onclick="addMasterUser()">➕ Thêm QLTP</button>
-        </div>
-        <div id="masterUsersList" style="max-height:400px;overflow-y:auto;"></div>
+        <div id="listUsers" style="max-height:380px;overflow-y:auto;"></div>
       </div>
 
       <!-- Tab: Siêu thị -->
-      <div id="masterTabSieuthi" class="tab-content">
-        <div style="display:flex;gap:8px;margin-bottom:10px;align-items:center;flex-wrap:wrap;background:#f8f9fa;padding:8px;border-radius:6px;border:1px solid #ddd;">
-          <input type="text" id="searchSieuthi" class="form-control" placeholder="🔍 Tìm Siêu thị..." oninput="renderMasterList('sieuthi')" style="flex:1;min-width:200px;border-color:var(--blue);">
-        </div>
+      <div id="tabSieuthi" class="tab-content">
         <div style="display:flex;gap:8px;margin-bottom:10px;flex-wrap:wrap;">
-          <input type="text" id="newSieuthiCode" class="form-control" placeholder="Mã MST" style="width:100px;">
-          <input type="text" id="newSieuthiName" class="form-control" placeholder="Tên siêu thị" style="flex:1;min-width:120px;">
-          <input type="text" id="newSieuthiQLTP" class="form-control" placeholder="Mã QLTP" style="width:100px;">
-          <button class="btn btn-success" onclick="addMasterItem('sieuthi')">➕ Thêm</button>
+          <input type="text" id="searchST" class="form-control" placeholder="🔍 Tìm theo mã ST..." oninput="renderMasterList('sieuthi')" style="flex:1;min-width:160px;">
         </div>
-        <div id="masterSieuthiList" style="max-height:400px;overflow-y:auto;"></div>
+        <div id="listSieuthi" style="max-height:380px;overflow-y:auto;"></div>
       </div>
 
       <!-- Tab: Sản phẩm -->
-      <div id="masterTabSanpham" class="tab-content">
-        <div style="display:flex;gap:8px;margin-bottom:10px;align-items:center;flex-wrap:wrap;background:#f8f9fa;padding:8px;border-radius:6px;border:1px solid #ddd;">
-          <input type="text" id="searchSanpham" class="form-control" placeholder="🔍 Tìm Sản phẩm..." oninput="renderMasterList('sanpham')" style="flex:1;min-width:200px;border-color:var(--blue);">
+      <div id="tabSanpham" class="tab-content">
+        <div style="display:flex;gap:8px;margin-bottom:10px;flex-wrap:wrap;">
+          <input type="text" id="searchSP" class="form-control" placeholder="🔍 Tìm theo mã SP..." oninput="renderMasterList('sanpham')" style="flex:1;min-width:160px;">
         </div>
-        <div style="display:flex;gap:8px;margin-bottom:10px;">
-          <input type="text" id="newSanphamCode" class="form-control" placeholder="Mã SP" style="width:160px;">
-          <input type="text" id="newSanphamName" class="form-control" placeholder="Tên sản phẩm" style="flex:1;">
-          <button class="btn btn-success" onclick="addMasterItem('sanpham')">➕ Thêm</button>
-        </div>
-        <div id="masterSanphamList" style="max-height:400px;overflow-y:auto;"></div>
+        <div id="listSanpham" style="max-height:380px;overflow-y:auto;"></div>
       </div>
 
       <!-- Tab: Nhân viên -->
-      <div id="masterTabNhanvien" class="tab-content">
-        <div style="display:flex;gap:8px;margin-bottom:10px;align-items:center;flex-wrap:wrap;background:#f8f9fa;padding:8px;border-radius:6px;border:1px solid #ddd;">
-          <input type="text" id="searchNhanvien" class="form-control" placeholder="🔍 Tìm Nhân viên..." oninput="renderMasterList('nhanvien')" style="flex:1;min-width:200px;border-color:var(--blue);">
+      <div id="tabNhanvien" class="tab-content">
+        <div style="display:flex;gap:8px;margin-bottom:10px;flex-wrap:wrap;">
+          <input type="text" id="searchNV" class="form-control" placeholder="🔍 Tìm theo mã NV..." oninput="renderMasterList('nhanvien')" style="flex:1;min-width:160px;">
         </div>
-        <div style="display:flex;gap:8px;margin-bottom:10px;">
-          <input type="text" id="newNhanvienCode" class="form-control" placeholder="Mã NV" style="width:140px;">
-          <input type="text" id="newNhanvienName" class="form-control" placeholder="Tên nhân viên" style="flex:1;">
-          <input type="text" id="newNhanvienST" class="form-control" placeholder="Mã Siêu Thị" style="width:120px;">
-          <button class="btn btn-success" onclick="addMasterItem('nhanvien')">➕ Thêm</button>
+        <div id="listNhanvien" style="max-height:380px;overflow-y:auto;"></div>
+      </div>
+
+      <!-- Tab: Đổi mật khẩu -->
+      <div id="tabPass" class="tab-content">
+        <div style="max-width:360px;">
+          <div class="form-group">
+            <label style="font-weight:700;font-size:12px;display:block;margin-bottom:6px;">Mật khẩu hiện tại</label>
+            <input type="password" id="cpOld" class="form-control">
+          </div>
+          <div class="form-group">
+            <label style="font-weight:700;font-size:12px;display:block;margin-bottom:6px;">Mật khẩu mới</label>
+            <input type="password" id="cpNew" class="form-control">
+          </div>
+          <button class="btn btn-green" onclick="changePass()">💾 Đổi Mật Khẩu</button>
         </div>
-        <div id="masterNhanvienList" style="max-height:400px;overflow-y:auto;"></div>
       </div>
     </div>
-    <div class="modal-footer"><button class="btn btn-secondary" onclick="closeModal('masterDataModal')">Đóng</button></div>
-  </div>
-</div>
-
-<!-- DETAIL MODAL -->
-<div class="modal-overlay hidden" id="detailModal">
-  <div class="modal modal-lg">
-    <div class="modal-header"><h3>🔍 Chi tiết đợt Biệt Kích</h3><button class="modal-close" onclick="closeModal('detailModal')">×</button></div>
-    <div class="modal-body" id="detailModalBody"></div>
-    <div class="modal-footer" id="detailModalFooter"></div>
-  </div>
-</div>
-
-<!-- REJECT MODAL -->
-<div class="modal-overlay hidden" id="rejectModal">
-  <div class="modal" style="width:400px;">
-    <div class="modal-header"><h3>❌ Lý do từ chối</h3><button class="modal-close" onclick="closeModal('rejectModal')">×</button></div>
-    <div class="modal-body"><textarea id="rejectReasonInput" class="form-control" rows="4" placeholder="Nhập lý do..."></textarea></div>
     <div class="modal-footer">
-      <button class="btn btn-danger" onclick="confirmReject()">Xác nhận</button>
-      <button class="btn btn-secondary" onclick="closeModal('rejectModal')">Hủy</button>
+      <button class="btn btn-gray" onclick="closeModal('modalMaster')">Đóng</button>
     </div>
   </div>
 </div>
 
-<!-- HISTORY MODAL -->
-<div class="modal-overlay hidden" id="historyModal">
+<!-- HISTORY -->
+<div class="modal-overlay hidden" id="modalHistory">
   <div class="modal modal-lg">
-    <div class="modal-header"><h3>📜 Lịch sử thao tác</h3><button class="modal-close" onclick="closeModal('historyModal')">×</button></div>
-    <div class="modal-body" style="padding:0; max-height:500px; overflow-y:auto;">
-      <table style="width:100%;border-collapse:collapse;font-size:12px;">
-        <thead style="background:#f5f5f5; position:sticky; top:0;">
-          <tr><th style="padding:8px;">Thời gian</th><th style="padding:8px;">User</th><th style="padding:8px;">Thao tác</th><th style="padding:8px;">Chi tiết</th></tr>
-        </thead>
-        <tbody id="historyBody"></tbody>
-      </table>
+    <div class="modal-header">
+      <h3>📜 Lịch Sử Thao Tác</h3>
+      <button class="modal-close" onclick="closeModal('modalHistory')">×</button>
     </div>
-    <div class="modal-footer">
-      <button class="btn btn-danger" id="btnClearHistory" onclick="clearHistory()" style="display:none;">Xóa lịch sử</button>
-      <button class="btn btn-secondary" onclick="closeModal('historyModal')">Đóng</button>
-    </div>
-  </div>
-</div>
-
-<!-- MANUAL LIST MODAL -->
-<div class="modal-overlay hidden" id="manualListModal">
-  <div class="modal modal-lg">
-    <div class="modal-header"><h3>⚠ Danh Sách Nhập Tay — Cần Gửi Admin</h3><button class="modal-close" onclick="closeModal('manualListModal')">×</button></div>
-    <div class="modal-body">
-      <div style="background:#fff3cd;border:1px solid #ffc107;border-radius:6px;padding:12px;margin-bottom:15px;font-size:13px;color:#856404;">
-        📋 <strong>Hướng dẫn:</strong> Copy nội dung bên dưới → gửi cho <strong>Hải Phú - 268789</strong> qua <strong>BCNB</strong>.
+    <div class="modal-body" style="padding:0;">
+      <div style="padding:10px 16px;border-bottom:1px solid var(--border);display:flex;gap:8px;">
+        <input type="text" id="histSearch" class="form-control" placeholder="🔍 Tìm mã khai báo, QLTP..." oninput="renderHistory()" style="flex:1;">
       </div>
-      <div id="manualListContent"></div>
+      <div style="max-height:460px;overflow-y:auto;">
+        <table class="hist-table">
+          <thead>
+            <tr>
+              <th>Thời Gian</th>
+              <th>QLTP</th>
+              <th>Thao Tác</th>
+              <th>Mã Khai Báo</th>
+              <th>Chi Tiết</th>
+            </tr>
+          </thead>
+          <tbody id="histBody"></tbody>
+        </table>
+      </div>
     </div>
     <div class="modal-footer">
-      <button class="btn btn-warning" style="color:black;" onclick="copyManualList()">📋 Copy tất cả</button>
-      <button class="btn btn-secondary" onclick="closeModal('manualListModal')">Đóng</button>
+      <div id="adminHistBtn" style="display:none;margin-right:auto;">
+        <button class="btn btn-red btn-sm" onclick="clearHistory()">🗑 Xóa Lịch Sử</button>
+      </div>
+      <button class="btn btn-gray" onclick="closeModal('modalHistory')">Đóng</button>
     </div>
   </div>
 </div>
