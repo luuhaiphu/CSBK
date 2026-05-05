@@ -475,12 +475,16 @@ function _msRender(field, q) {
   }
 
   const upper = q.trim().toUpperCase();
+  // ── FIX: Tìm kiếm theo cả mã lẫn tên ──
   const filtered = upper
-    ? items.filter(x => String(x.code).toUpperCase().includes(upper)).slice(0, 30)
+    ? items.filter(x =>
+        String(x.code).toUpperCase().includes(upper) ||
+        String(x.name).toUpperCase().includes(upper)
+      ).slice(0, 30)
     : items.slice(0, 30);
 
   if (!filtered.length) {
-    dd.innerHTML = `<div class="ms-no-result">Không tìm thấy mã "${q}" — Liên hệ Hải Phú 268789</div>`;
+    dd.innerHTML = `<div class="ms-no-result">Không tìm thấy "${q}" — Liên hệ Hải Phú 268789</div>`;
     dd.classList.remove('hidden');
     return;
   }
@@ -629,7 +633,6 @@ async function submitCreate() {
   const isEdit = !!editingId;
   const id = editingId || genId();
 
-  // ── FIX BUG LƯU DATA NHẸ CỘT SP/NV ──
   const payload = {
     id,
     authorCode:   currentUser.code,
@@ -639,8 +642,8 @@ async function submitCreate() {
     ngay,
     tuGio,
     denGio,
-    sanphamList:  selSP.map(x => x.code).join(';'), // Chỉ nối mã bằng ;
-    nhanvienList: selNV.map(x => x.code).join(';'), // Chỉ nối mã bằng ;
+    sanphamList:  selSP.map(x => x.code).join(';'),
+    nhanvienList: selNV.map(x => x.code).join(';'),
     rowStatus:    'active',
     createdAt:    isEdit ? (declarations.find(x=>x.id===id)?.createdAt || nowISO()) : nowISO(),
     updatedAt:    nowISO()
@@ -654,7 +657,7 @@ async function submitCreate() {
 
     const localObj = {
       ...payload,
-      sanphamList:  selSP, // UI cục bộ vẫn cần mảng Array
+      sanphamList:  selSP,
       nhanvienList: selNV
     };
     if (isEdit) {
@@ -1012,7 +1015,6 @@ async function doImport() {
       ngay:          r.ngay,
       tuGio:         r.tuGio,
       denGio:        r.denGio,
-      // Khi Import cũng chỉ nối các mã lại bằng dấu ;
       sanphamList:   r.sanphamList.map(x => x.code).join(';'),
       nhanvienList:  r.nhanvienList.map(x => x.code).join(';'),
       rowStatus:     'active',
