@@ -630,8 +630,14 @@ async function submitCreate() {
 
   if (tuGio >= denGio) return toast('error', 'Từ giờ phải nhỏ hơn Đến giờ!');
 
+  // Thêm ràng buộc tối đa 3 tiếng (180 phút)
+  const [tuH, tuM] = tuGio.split(':').map(Number);
+  const [denH, denM] = denGio.split(':').map(Number);
+  if ((denH * 60 + denM) - (tuH * 60 + tuM) > 180) {
+    return toast('error', 'Thời gian khai báo hoạt động tối đa là 3 tiếng!');
+  }
+
   const isEdit = !!editingId;
-  const id = editingId || genId();
 
   const payload = {
     id,
@@ -958,8 +964,18 @@ function parseImport(rawRows) {
     if (!ngay || ngay.length < 8) errs.push('Sai định dạng ngày');
 
     const timeRgx = /^\d{2}:\d{2}$/;
-    if (!timeRgx.test(tuGio) || !timeRgx.test(denGio)) errs.push('Giờ phải định dạng HH:MM');
-    else if (tuGio >= denGio && tuGio !== '24:00') errs.push('Từ giờ ≥ Đến giờ');
+    if (!timeRgx.test(tuGio) || !timeRgx.test(denGio)) {
+      errs.push('Giờ phải định dạng HH:MM');
+    } else if (tuGio >= denGio && tuGio !== '24:00') {
+      errs.push('Từ giờ ≥ Đến giờ');
+    } else {
+      // Thêm ràng buộc tối đa 3 tiếng khi import file
+      const [tH, tM] = tuGio.split(':').map(Number);
+      const [dH, dM] = denGio.split(':').map(Number);
+      if ((dH * 60 + dM) - (tH * 60 + tM) > 180) {
+        errs.push('Thời gian khai báo vượt quá 3 tiếng');
+      }
+    }
 
     const sanphamList = [];
     spCodes.forEach(code => {
