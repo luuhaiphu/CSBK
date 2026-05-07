@@ -638,7 +638,7 @@ async function submitCreate() {
   }
 
   const isEdit = !!editingId;
-
+  const id = editingId || genId();
   const payload = {
     id,
     authorCode:   currentUser.code,
