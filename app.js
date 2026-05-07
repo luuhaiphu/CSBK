@@ -109,16 +109,7 @@ function extractTime(val) {
   return s;
 }
 
-// ── TIỆN ÍCH TÍNH PHÚT ──
-// Chuyển "HH:MM" → số phút (VD: "16:30" → 990)
-function timeToMinutes(t) {
-  if (!t) return -1;
-  const m = String(t).match(/^(\d{1,2}):(\d{2})$/);
-  if (!m) return -1;
-  return parseInt(m[1], 10) * 60 + parseInt(m[2], 10);
-}
-
-// Chuyển mảng từ chuỗi "mã1; mã2" tải từ Google Sheets thành Array Object cho giao diện
+// Chuyển chuỗi mã (mã1; mã2) tải từ Google Sheets thành Array Object cho giao diện
 function parseList(raw, masterArray) {
   if (!raw) return [];
   const s = String(raw).trim();
@@ -625,30 +616,6 @@ function openEdit(id) {
   showModal('modalCreate');
 }
 
-// ── VALIDATION THỜI GIAN (tối đa 3 tiếng = 180 phút) ──
-const MAX_DURATION_MINUTES = 180; // 3 tiếng
-
-function validateTimeRange(tuGio, denGio) {
-  const start = timeToMinutes(tuGio);
-  const end   = timeToMinutes(denGio);
-
-  if (start < 0 || end < 0) return { ok: false, msg: 'Giờ không hợp lệ!' };
-  if (end <= start)          return { ok: false, msg: 'Đến giờ phải lớn hơn Từ giờ!' };
-
-  const diff = end - start;
-  if (diff > MAX_DURATION_MINUTES) {
-    const maxH = Math.floor(MAX_DURATION_MINUTES / 60);
-    const maxM = MAX_DURATION_MINUTES % 60;
-    const maxStr = maxM > 0 ? `${maxH} tiếng ${maxM} phút` : `${maxH} tiếng`;
-    return {
-      ok: false,
-      msg: `Thời gian khai báo tối đa ${maxStr}! (Hiện tại: ${Math.floor(diff/60)} tiếng ${diff%60} phút)`
-    };
-  }
-
-  return { ok: true };
-}
-
 async function submitCreate() {
   if (!selST)            return toast('error', 'Chọn Siêu Thị!');
   if (!selSP.length)     return toast('error', 'Chọn ít nhất 1 Sản Phẩm!');
@@ -661,9 +628,7 @@ async function submitCreate() {
   if (!ngay) return toast('error', 'Chọn Ngày!');
   if (!tuGio || !denGio) return toast('error', 'Nhập đủ Từ giờ và Đến giờ!');
 
-  // ── KIỂM TRA KHOẢNG THỜI GIAN (tối đa 3 tiếng) ──
-  const timeCheck = validateTimeRange(tuGio, denGio);
-  if (!timeCheck.ok) return toast('error', timeCheck.msg);
+  if (tuGio >= denGio) return toast('error', 'Từ giờ phải nhỏ hơn Đến giờ!');
 
   const isEdit = !!editingId;
   const id = editingId || genId();
@@ -768,14 +733,6 @@ function openDetail(id) {
   const nvHtml = (d.nhanvienList || []).map(x =>
     `<span class="tag" style="margin:2px;background:var(--blue-light);color:var(--blue);">${x.code} - ${x.name}</span>`).join('');
 
-  // Tính thời lượng để hiển thị
-  const startMin = timeToMinutes(d.tuGio);
-  const endMin   = timeToMinutes(d.denGio);
-  const diffMin  = (startMin >= 0 && endMin >= 0) ? (endMin - startMin) : 0;
-  const durationStr = diffMin > 0
-    ? `${Math.floor(diffMin/60)} tiếng ${diffMin%60 > 0 ? diffMin%60 + ' phút' : ''}`.trim()
-    : '';
-
   document.getElementById('detailBody').innerHTML = `
     <div class="detail-grid" style="margin-bottom:16px;">
       <div class="detail-item"><label>Mã Khai Báo</label><div class="val">${d.id}</div></div>
@@ -783,7 +740,7 @@ function openDetail(id) {
       <div class="detail-item"><label>QLTP</label><div class="val">${d.authorCode} - ${d.authorName}</div></div>
       <div class="detail-item"><label>Siêu Thị</label><div class="val">${d.sieuthiCode} - ${d.sieuthiName}</div></div>
       <div class="detail-item"><label>Ngày BK</label><div class="val" style="color:var(--blue);font-size:15px;">${fDate(d.ngay)}</div></div>
-      <div class="detail-item"><label>Giờ BK</label><div class="val">${fTime(d.tuGio)} → ${fTime(d.denGio)}${durationStr ? ` <span style="color:var(--gray-600);font-size:11px;">(${durationStr})</span>` : ''}</div></div>
+      <div class="detail-item"><label>Giờ BK</label><div class="val">${fTime(d.tuGio)} → ${fTime(d.denGio)}</div></div>
     </div>
     <div style="margin-bottom:14px;">
       <div class="detail-item"><label>Sản Phẩm</label></div>
@@ -1001,13 +958,8 @@ function parseImport(rawRows) {
     if (!ngay || ngay.length < 8) errs.push('Sai định dạng ngày');
 
     const timeRgx = /^\d{2}:\d{2}$/;
-    if (!timeRgx.test(tuGio) || !timeRgx.test(denGio)) {
-      errs.push('Giờ phải định dạng HH:MM');
-    } else {
-      // ── KIỂM TRA KHOẢNG THỜI GIAN KHI IMPORT (tối đa 3 tiếng) ──
-      const timeCheck = validateTimeRange(tuGio, denGio);
-      if (!timeCheck.ok) errs.push(timeCheck.msg);
-    }
+    if (!timeRgx.test(tuGio) || !timeRgx.test(denGio)) errs.push('Giờ phải định dạng HH:MM');
+    else if (tuGio >= denGio && tuGio !== '24:00') errs.push('Từ giờ ≥ Đến giờ');
 
     const sanphamList = [];
     spCodes.forEach(code => {
