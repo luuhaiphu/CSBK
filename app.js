@@ -470,8 +470,16 @@ function _msRender(field, q) {
   if (field === 'st' && currentUser.role === 'qltp') {
     items = items.filter(s => String(s.qltpCode) === String(currentUser.code));
   }
-  if (field === 'nv' && currentUser.role === 'qltp' && selST) {
-    items = items.filter(n => !n.sieuthiCode || n.sieuthiCode === selST.code);
+  
+  if (field === 'nv' && currentUser.role === 'qltp') {
+    // Lấy tất cả mã ST thuộc QLTP này
+    const mySTCodes = new Set(
+      masterData.sieuthi
+        .filter(s => String(s.qltpCode) === String(currentUser.code))
+        .map(s => s.code)
+    );
+    // Hiển thị NV của toàn bộ ST trong phạm vi QLTP, không bị giới hạn bởi ST đang khai báo
+    items = items.filter(n => !n.sieuthiCode || mySTCodes.has(n.sieuthiCode));
   }
 
   const upper = q.trim().toUpperCase();
@@ -488,7 +496,6 @@ function _msRender(field, q) {
     dd.classList.remove('hidden');
     return;
   }
-
   const selectedCodes = field === 'st'
     ? (selST ? [selST.code] : [])
     : field === 'sp' ? selSP.map(x => x.code) : selNV.map(x => x.code);
