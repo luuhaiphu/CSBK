@@ -6,10 +6,6 @@
 <title>BHX — Khai Báo Biệt Kích</title>
 <script src="https://cdn.sheetjs.com/xlsx-latest/package/dist/xlsx.full.min.js"></script>
 <style>
-/* ============================================================
-   DESIGN: Industrial / Utilitarian — Xanh lá BHX chủ đạo
-   Font: Be Vietnam Pro (Google Fonts CDN via @import)
-   ============================================================ */
 @import url('https://fonts.googleapis.com/css2?family=Be+Vietnam+Pro:wght@400;500;600;700;800&display=swap');
 
 :root {
@@ -51,12 +47,10 @@ body {
   line-height: 1.5;
 }
 
-/* ── SCROLLBAR ── */
 ::-webkit-scrollbar { width: 6px; height: 6px; }
 ::-webkit-scrollbar-track { background: var(--gray-100); }
 ::-webkit-scrollbar-thumb { background: var(--gray-400); border-radius: 3px; }
 
-/* ── TOAST ── */
 .toast-wrap {
   position: fixed; top: 64px; right: 20px; z-index: 99999;
   display: flex; flex-direction: column; gap: 8px; pointer-events: none;
@@ -73,7 +67,6 @@ body {
 .toast.info    { background: var(--blue); }
 @keyframes toastIn { from { transform: translateX(110%); opacity: 0; } to { transform: translateX(0); opacity: 1; } }
 
-/* ── OVERLAY LOADING ── */
 #loadingOverlay {
   position: fixed; inset: 0; background: rgba(0,0,0,.45);
   z-index: 99998; display: none;
@@ -88,9 +81,6 @@ body {
 .loading-text { color: #fff; font-weight: 600; font-size: 14px; }
 @keyframes spin { to { transform: rotate(360deg); } }
 
-/* ============================================================
-   LOGIN
-   ============================================================ */
 #loginScreen {
   position: fixed; inset: 0;
   background: linear-gradient(135deg, #0d3b1e 0%, #1a7a3c 55%, #0a4f28 100%);
@@ -149,7 +139,6 @@ body {
 .btn-login:hover { background: var(--green-dark); }
 .btn-login:active { transform: scale(.99); }
 
-/* Suggest dropdown in login */
 .suggest-wrap { position: relative; }
 .suggest-list {
   position: absolute; top: 100%; left: 0; right: 0;
@@ -181,13 +170,9 @@ body {
 }
 .login-role-tab.active { background: var(--green); color: #fff; }
 
-/* ============================================================
-   APP SHELL
-   ============================================================ */
 #appShell { display: none; flex-direction: column; min-height: 100vh; }
 #appShell.show { display: flex; }
 
-/* ── HEADER ── */
 .header {
   background: var(--green); color: #fff;
   height: 56px; display: flex; align-items: center;
@@ -229,7 +214,6 @@ body {
   font-size: 14px;
 }
 
-/* ── ROLE BAR ── */
 .role-bar {
   background: #fff; border-bottom: 2px solid var(--green);
   padding: 0 20px; height: 38px;
@@ -251,10 +235,8 @@ body {
 }
 .btn-logout:hover { background: var(--red); color: #fff; }
 
-/* ── MAIN ── */
 .main { padding: 16px 20px; flex: 1; }
 
-/* ── FILTER CARD ── */
 .card {
   background: #fff; border-radius: var(--radius);
   box-shadow: var(--shadow-sm); border: 1px solid var(--border);
@@ -268,7 +250,6 @@ body {
 }
 .filter-group .form-control { min-width: 140px; }
 
-/* ── BUTTONS ── */
 .btn {
   display: inline-flex; align-items: center; gap: 5px;
   padding: 7px 14px; border-radius: var(--radius-sm);
@@ -292,7 +273,6 @@ body {
 }
 .btn-outline-green:hover { background: var(--green-light); }
 
-/* ── ACTION BAR ── */
 .action-bar {
   display: flex; gap: 8px; align-items: center; flex-wrap: wrap;
   padding: 10px 16px; margin-bottom: 12px;
@@ -301,7 +281,6 @@ body {
 }
 .action-bar-right { margin-left: auto; display: flex; gap: 8px; flex-wrap: wrap; }
 
-/* ── TABLE ── */
 .table-card { overflow: hidden; }
 .table-topbar {
   padding: 8px 16px; background: var(--gray-50);
@@ -327,7 +306,6 @@ tbody td:first-child { text-align: center; }
 
 .idx-cell { color: var(--gray-400); font-size: 11px; }
 
-/* Status badge */
 .badge {
   display: inline-flex; align-items: center; gap: 4px;
   padding: 3px 9px; border-radius: 20px;
@@ -336,16 +314,12 @@ tbody td:first-child { text-align: center; }
 .badge-active   { background: var(--green-light); color: var(--green-dark); border: 1px solid var(--green-mid); }
 .badge-deleted  { background: var(--red-light); color: var(--red); border: 1px solid #ffcdd2; }
 
-/* Tag chip */
 .tag { display: inline-flex; align-items: center; gap: 4px; padding: 2px 8px;
   border-radius: 20px; font-size: 11px; font-weight: 600;
   background: var(--blue-light); color: var(--blue); border: 1px solid #bbdefb;
   margin: 1px;
 }
 
-/* ============================================================
-   MODALS
-   ============================================================ */
 .modal-overlay {
   position: fixed; inset: 0; background: rgba(0,0,0,.5);
   z-index: 2000; display: flex; align-items: flex-start;
@@ -388,7 +362,6 @@ tbody td:first-child { text-align: center; }
 .form-row   { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
 .form-row-3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 16px; }
 
-/* ── SEARCHABLE MULTI-SELECT ── */
 .multi-select-wrap { position: relative; }
 .ms-input {
   width: 100%; padding: 9px 12px;
@@ -430,7 +403,6 @@ tbody td:first-child { text-align: center; }
 }
 .tag-chip .rm:hover { color: var(--red); }
 
-/* ── TABS ── */
 .tabs { display: flex; border-bottom: 2px solid var(--green); margin-bottom: 18px; flex-wrap: wrap; }
 .tab-btn {
   padding: 9px 16px; background: none; border: none;
@@ -442,7 +414,6 @@ tbody td:first-child { text-align: center; }
 .tab-content { display: none; }
 .tab-content.active { display: block; }
 
-/* ── IMPORT ── */
 .upload-zone {
   border: 2px dashed var(--gray-400); padding: 28px;
   text-align: center; cursor: pointer; border-radius: var(--radius);
@@ -460,7 +431,6 @@ tbody td:first-child { text-align: center; }
 .preview-row.ok   { background: #f0fff4; }
 .preview-row.err  { background: var(--red-light); }
 
-/* ── MASTER DATA CARD ── */
 .master-card {
   border: 1px solid var(--border); border-radius: var(--radius);
   padding: 16px; margin-bottom: 14px; position: relative;
@@ -482,24 +452,20 @@ tbody td:first-child { text-align: center; }
   background: var(--green-light); color: var(--green-dark); border: 1px solid var(--green-mid);
 }
 
-/* ── DETAIL VIEW ── */
 .detail-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; font-size: 13px; }
 .detail-item label { font-size: 11px; font-weight: 700; color: var(--gray-600); text-transform: uppercase; letter-spacing: .4px; display: block; margin-bottom: 3px; }
 .detail-item .val { font-weight: 600; color: var(--text); }
 
-/* ── HISTORY TABLE ── */
 .hist-table { width: 100%; border-collapse: collapse; font-size: 12px; }
 .hist-table th { background: var(--gray-100); padding: 8px 10px; text-align: left; font-weight: 700; border-bottom: 1px solid var(--border); }
 .hist-table td { padding: 7px 10px; border-bottom: 1px solid var(--gray-100); }
 
-/* ── FOOTER ── */
 .footer {
   text-align: center; padding: 14px; background: #fff;
   border-top: 1px solid var(--border); color: var(--gray-600);
   font-size: 12px; margin-top: auto;
 }
 
-/* ── OFFLINE BANNER ── */
 .offline-banner {
   background: var(--orange); color: #fff;
   text-align: center; padding: 6px 16px; font-size: 12.5px; font-weight: 600;
@@ -507,35 +473,37 @@ tbody td:first-child { text-align: center; }
 }
 .offline-banner.show { display: block; }
 
-/* ── EMPTY STATE ── */
 .empty-state {
   text-align: center; padding: 50px 20px; color: var(--gray-400);
 }
 .empty-state .icon { font-size: 48px; margin-bottom: 10px; }
 .empty-state p { font-weight: 600; font-size: 14px; }
 
-/* ── ADMIN NOTICE (không có duyệt) ── */
 .observer-badge {
   display: inline-flex; align-items: center; gap: 5px;
   padding: 3px 10px; background: #fff3e0; color: var(--orange);
   border: 1px solid #ffe0b2; border-radius: 20px; font-size: 11px; font-weight: 700;
 }
+
+/* Badge chưa xuất nổi bật */
+#newRecordsBadge {
+  font-size: 12px; font-weight: 700; color: var(--orange);
+  padding: 4px 10px; background: #fff3e0;
+  border: 1px solid #ffe0b2; border-radius: 20px;
+  animation: pulse 2s infinite;
+}
 </style>
 </head>
 <body>
 
-<!-- ── TOAST ── -->
 <div class="toast-wrap" id="toastWrap"></div>
 
-<!-- ── LOADING ── -->
 <div id="loadingOverlay">
   <div class="spinner"></div>
   <div class="loading-text" id="loadingText">Đang tải...</div>
 </div>
 
-<!-- ============================================================
-     LOGIN SCREEN
-     ============================================================ -->
+<!-- LOGIN SCREEN -->
 <div id="loginScreen">
   <div class="login-card">
     <div class="login-card-header">
@@ -544,13 +512,11 @@ tbody td:first-child { text-align: center; }
       <p>Hệ thống khai báo bán hàng đội Biệt Kích</p>
     </div>
     <div class="login-card-body">
-      <!-- Role tabs -->
       <div class="login-role-tabs">
         <button class="login-role-tab active" id="tabQLTP" onclick="switchLoginRole('qltp')">👤 QLTP</button>
         <button class="login-role-tab" id="tabAdmin" onclick="switchLoginRole('admin')">🔐 Admin</button>
       </div>
 
-      <!-- QLTP fields -->
       <div id="loginFieldQLTP">
         <div class="form-group">
           <label>Mã QLTP của bạn</label>
@@ -569,7 +535,6 @@ tbody td:first-child { text-align: center; }
         </div>
       </div>
 
-      <!-- Admin fields -->
       <div id="loginFieldAdmin" style="display:none;">
         <div class="form-group">
           <label>Mật khẩu Admin</label>
@@ -586,11 +551,8 @@ tbody td:first-child { text-align: center; }
   </div>
 </div>
 
-<!-- ============================================================
-     APP SHELL
-     ============================================================ -->
+<!-- APP SHELL -->
 <div id="appShell">
-  <!-- HEADER -->
   <div class="header">
     <span class="header-logo">🦅</span>
     <div class="header-title">
@@ -607,12 +569,10 @@ tbody td:first-child { text-align: center; }
     </div>
   </div>
 
-  <!-- OFFLINE BANNER -->
   <div class="offline-banner" id="offlineBanner">
     ⚠ Không có kết nối Internet — Vui lòng kiểm tra mạng và tải lại trang
   </div>
 
-  <!-- ROLE BAR -->
   <div class="role-bar">
     <div class="role-pill" id="rolePill">...</div>
     <span id="roleUserText" style="font-weight:600; color:var(--gray-800);"></span>
@@ -622,7 +582,6 @@ tbody td:first-child { text-align: center; }
     <button class="btn-logout" onclick="doLogout()">⬅ Đăng xuất</button>
   </div>
 
-  <!-- MAIN -->
   <div class="main">
 
     <!-- FILTER -->
@@ -642,6 +601,15 @@ tbody td:first-child { text-align: center; }
           <label>Đến ngày</label>
           <input type="date" id="fltTo" class="form-control" oninput="applyFilter()">
         </div>
+        <!-- ── MỚI: Filter trạng thái export ── -->
+        <div class="filter-group">
+          <label>Trạng Thái Export</label>
+          <select id="fltExport" class="form-control" onchange="applyFilter()" style="min-width:150px;">
+            <option value="all">Tất cả</option>
+            <option value="new">🆕 Chưa xuất</option>
+            <option value="exported">✅ Đã xuất</option>
+          </select>
+        </div>
         <div class="filter-group">
           <label>&nbsp;</label>
           <div style="display:flex;gap:6px;">
@@ -655,7 +623,13 @@ tbody td:first-child { text-align: center; }
 
     <!-- ACTION BAR -->
     <div class="action-bar">
+      <!-- Export Excel thường -->
       <button class="btn btn-green btn-sm" onclick="exportExcel()">📥 Export Excel</button>
+      <!-- ── MỚI: Nút export chỉ bản chưa xuất ── -->
+      <button class="btn btn-sm" style="background:var(--orange);color:#fff;" onclick="exportNewOnly()" title="Chỉ export những bản ghi chưa từng xuất">🆕 Export Mới</button>
+      <!-- ── MỚI: Badge đếm số chưa xuất ── -->
+      <span id="newRecordsBadge" style="display:none;"></span>
+
       <button class="btn btn-blue btn-sm" id="btnImport" onclick="openImportModal()">📤 Import</button>
       <a href="#" style="font-size:12px;color:var(--blue);font-weight:700;text-decoration:none;" onclick="downloadTemplate()">⬇ Tải mẫu</a>
 
@@ -689,6 +663,7 @@ tbody td:first-child { text-align: center; }
               <th>Sản Phẩm</th>
               <th>Nhân Viên</th>
               <th>Ngày Tạo</th>
+              <th>Export</th>
               <th>Thao Tác</th>
             </tr>
           </thead>
@@ -703,11 +678,7 @@ tbody td:first-child { text-align: center; }
   </div>
 </div>
 
-<!-- ============================================================
-     MODALS
-     ============================================================ -->
-
-<!-- CREATE / EDIT -->
+<!-- MODAL: CREATE / EDIT -->
 <div class="modal-overlay hidden" id="modalCreate">
   <div class="modal modal-lg">
     <div class="modal-header">
@@ -715,7 +686,6 @@ tbody td:first-child { text-align: center; }
       <button class="modal-close" onclick="closeModal('modalCreate')">×</button>
     </div>
     <div class="modal-body">
-      <!-- Siêu thị (single select theo mã) -->
       <div class="form-group">
         <label style="font-weight:700;font-size:12px;color:var(--gray-600);text-transform:uppercase;letter-spacing:.4px;display:block;margin-bottom:5px;">
           Siêu Thị <span style="color:red">*</span>
@@ -731,7 +701,6 @@ tbody td:first-child { text-align: center; }
         <div class="tags-wrap" id="tagsST"></div>
       </div>
 
-      <!-- Ngày + Giờ -->
       <div class="form-row-3">
         <div class="form-group">
           <label style="font-weight:700;font-size:12px;color:var(--gray-600);text-transform:uppercase;letter-spacing:.4px;display:block;margin-bottom:5px;">
@@ -739,8 +708,6 @@ tbody td:first-child { text-align: center; }
           </label>
           <input type="date" id="inpNgay" class="form-control">
         </div>
-        
-        <!-- SỬA BUG 2: Chuyển hẳn sang thẻ Select Dropdown tĩnh 1-24h -->
         <div class="form-group">
           <label style="font-weight:700;font-size:12px;color:var(--gray-600);text-transform:uppercase;letter-spacing:.4px;display:block;margin-bottom:5px;">
             Từ Giờ
@@ -783,7 +750,6 @@ tbody td:first-child { text-align: center; }
         </div>
       </div>
 
-      <!-- Sản phẩm (multi select theo mã) -->
       <div class="form-group">
         <label style="font-weight:700;font-size:12px;color:var(--gray-600);text-transform:uppercase;letter-spacing:.4px;display:block;margin-bottom:5px;">
           Sản Phẩm <span style="color:red">*</span> — có thể chọn nhiều
@@ -799,7 +765,6 @@ tbody td:first-child { text-align: center; }
         <div class="tags-wrap" id="tagsSP"></div>
       </div>
 
-      <!-- Nhân viên (multi select theo mã) -->
       <div class="form-group">
         <label style="font-weight:700;font-size:12px;color:var(--gray-600);text-transform:uppercase;letter-spacing:.4px;display:block;margin-bottom:5px;">
           Nhân Viên <span style="color:red">*</span> — có thể chọn nhiều
@@ -822,7 +787,7 @@ tbody td:first-child { text-align: center; }
   </div>
 </div>
 
-<!-- DETAIL -->
+<!-- MODAL: DETAIL -->
 <div class="modal-overlay hidden" id="modalDetail">
   <div class="modal modal-lg">
     <div class="modal-header">
@@ -836,7 +801,7 @@ tbody td:first-child { text-align: center; }
   </div>
 </div>
 
-<!-- IMPORT -->
+<!-- MODAL: IMPORT -->
 <div class="modal-overlay hidden" id="modalImport">
   <div class="modal modal-xl">
     <div class="modal-header">
@@ -861,7 +826,7 @@ tbody td:first-child { text-align: center; }
   </div>
 </div>
 
-<!-- MASTER DATA (Admin) -->
+<!-- MODAL: MASTER DATA -->
 <div class="modal-overlay hidden" id="modalMaster">
   <div class="modal modal-xl">
     <div class="modal-header">
@@ -878,7 +843,6 @@ tbody td:first-child { text-align: center; }
         <button class="tab-btn" onclick="switchTab('pass')">🔑 Đổi Mật Khẩu</button>
       </div>
 
-      <!-- Tab: Import -->
       <div id="tabImport" class="tab-content active">
         <div class="master-card">
           <h4>🏪 File Phân Bổ (QLTP + Siêu Thị)</h4>
@@ -932,7 +896,6 @@ tbody td:first-child { text-align: center; }
         </div>
       </div>
 
-      <!-- Tab: Users (QLTP) -->
       <div id="tabUsers" class="tab-content">
         <div style="display:flex;gap:8px;margin-bottom:10px;flex-wrap:wrap;">
           <input type="text" id="searchUsers" class="form-control" placeholder="🔍 Tìm theo mã..." oninput="renderMasterList('users')" style="flex:1;min-width:160px;">
@@ -943,7 +906,6 @@ tbody td:first-child { text-align: center; }
         <div id="listUsers" style="max-height:380px;overflow-y:auto;"></div>
       </div>
 
-      <!-- Tab: Siêu thị -->
       <div id="tabSieuthi" class="tab-content">
         <div style="display:flex;gap:8px;margin-bottom:10px;flex-wrap:wrap;">
           <input type="text" id="searchST" class="form-control" placeholder="🔍 Tìm theo mã ST..." oninput="renderMasterList('sieuthi')" style="flex:1;min-width:160px;">
@@ -951,7 +913,6 @@ tbody td:first-child { text-align: center; }
         <div id="listSieuthi" style="max-height:380px;overflow-y:auto;"></div>
       </div>
 
-      <!-- Tab: Sản phẩm -->
       <div id="tabSanpham" class="tab-content">
         <div style="display:flex;gap:8px;margin-bottom:10px;flex-wrap:wrap;">
           <input type="text" id="searchSP" class="form-control" placeholder="🔍 Tìm theo mã SP..." oninput="renderMasterList('sanpham')" style="flex:1;min-width:160px;">
@@ -959,7 +920,6 @@ tbody td:first-child { text-align: center; }
         <div id="listSanpham" style="max-height:380px;overflow-y:auto;"></div>
       </div>
 
-      <!-- Tab: Nhân viên -->
       <div id="tabNhanvien" class="tab-content">
         <div style="display:flex;gap:8px;margin-bottom:10px;flex-wrap:wrap;">
           <input type="text" id="searchNV" class="form-control" placeholder="🔍 Tìm theo mã NV..." oninput="renderMasterList('nhanvien')" style="flex:1;min-width:160px;">
@@ -967,7 +927,6 @@ tbody td:first-child { text-align: center; }
         <div id="listNhanvien" style="max-height:380px;overflow-y:auto;"></div>
       </div>
 
-      <!-- Tab: Đổi mật khẩu -->
       <div id="tabPass" class="tab-content">
         <div style="max-width:360px;">
           <div class="form-group">
@@ -988,7 +947,7 @@ tbody td:first-child { text-align: center; }
   </div>
 </div>
 
-<!-- HISTORY -->
+<!-- MODAL: HISTORY -->
 <div class="modal-overlay hidden" id="modalHistory">
   <div class="modal modal-lg">
     <div class="modal-header">
