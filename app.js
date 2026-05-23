@@ -15,18 +15,30 @@ const ADMIN_PASS_KEY = 'bhx_adminPass';
 function getAdminPass() { return localStorage.getItem(ADMIN_PASS_KEY) || '24122004'; }
 function setAdminPass(p) { localStorage.setItem(ADMIN_PASS_KEY, p); }
 
-let currentUser   = null; 
+// ── EXPORT TRACKING ──
+const EXPORT_LOG_KEY = 'bhx_exportedIds';
+function getExportedIds() {
+  try { return new Set(JSON.parse(localStorage.getItem(EXPORT_LOG_KEY) || '[]')); }
+  catch { return new Set(); }
+}
+function markAsExported(ids) {
+  const existing = getExportedIds();
+  ids.forEach(id => existing.add(id));
+  localStorage.setItem(EXPORT_LOG_KEY, JSON.stringify([...existing]));
+}
+
+let currentUser   = null;
 let masterData    = { qltpList: [], sieuthi: [], sanpham: [], nhanvien: [] };
-let declarations  = [];    
-let activityLog   = [];    
+let declarations  = [];
+let activityLog   = [];
 let filteredDecls = [];
 let selectedIds   = new Set();
 
-let selST = null;          
-let selSP = [];            
-let selNV = [];            
-let editingId = null;      
-let importRows = [];       
+let selST = null;
+let selSP = [];
+let selNV = [];
+let editingId = null;
+let importRows = [];
 
 // ============================================================
 // 2. TIỆN ÍCH
@@ -75,12 +87,10 @@ function fTime(t) {
   return s;
 }
 
-// Bóc tách siêu chuẩn chuỗi ngày Google Sheets
 function normalizeAnyDateToISO(val) {
   if (!val && val !== 0) return '';
   let s = String(val).trim();
   if (!s) return '';
-  
   if (/^\d{4}-\d{2}-\d{2}/.test(s)) return s.substring(0, 10);
   if (s.includes('/')) {
     const p = s.split('/');
@@ -97,10 +107,9 @@ function normalizeAnyDateToISO(val) {
   if (!isNaN(parsed.getTime())) {
     return `${parsed.getFullYear()}-${String(parsed.getMonth()+1).padStart(2,'0')}-${String(parsed.getDate()).padStart(2,'0')}`;
   }
-  return s; 
+  return s;
 }
 
-// Cắt lấy đúng HH:MM từ đống rác "Sat Dec 30 1899 HH:MM:SS" của Google
 function extractTime(val) {
   if (!val) return '';
   const s = String(val).trim();
@@ -109,16 +118,13 @@ function extractTime(val) {
   return s;
 }
 
-// Chuyển chuỗi mã (mã1; mã2) tải từ Google Sheets thành Array Object cho giao diện
 function parseList(raw, masterArray) {
   if (!raw) return [];
   const s = String(raw).trim();
   if (!s) return [];
-  // Tương thích ngược nếu Sheets vẫn còn data kiểu JSON cũ
   if (s.startsWith('[')) {
     try { return JSON.parse(s); } catch(e) { return []; }
   }
-  // Data mới chuẩn (cách nhau bởi ;)
   return s.split(';').map(code => {
     const cleanCode = code.trim();
     if (!cleanCode) return null;
@@ -240,7 +246,7 @@ async function doLogin() {
       errEl.style.display = '';
       return;
     }
-    currentUser = { code: String(r.data.code).trim(), name: r.data.name, role: 'qltp' }; 
+    currentUser = { code: String(r.data.code).trim(), name: r.data.name, role: 'qltp' };
     await afterLogin();
   } catch (err) {
     hideLoading();
@@ -281,20 +287,15 @@ async function loadAllData() {
   masterData.sieuthi   = d.sieuthi   || [];
   masterData.sanpham   = d.sanpham   || [];
   masterData.nhanvien  = d.nhanvien  || [];
-  
+
   declarations = (d.declarations || []).filter(x => x.rowStatus !== 'deleted').map(x => {
     x.authorCode = String(x.authorCode || '').trim();
     x.sieuthiCode = String(x.sieuthiCode || '').trim();
-
-    // ── XỬ LÝ LỖI TRƯỚC ĐÓ ──
-    x.ngay = normalizeAnyDateToISO(x.ngay);     // Ngày
-    x.tuGio = extractTime(x.tuGio);             // Giờ bóc tách 1899
+    x.ngay = normalizeAnyDateToISO(x.ngay);
+    x.tuGio = extractTime(x.tuGio);
     x.denGio = extractTime(x.denGio);
-    
-    // Tải mảng từ chuỗi "mã1;mã2"
     x.sanphamList = parseList(x.sanphamList, masterData.sanpham);
     x.nhanvienList = parseList(x.nhanvienList, masterData.nhanvien);
-    
     return x;
   });
 
@@ -372,16 +373,33 @@ function doLogout() {
 // ============================================================
 
 function applyFilter() {
-  const fST   = document.getElementById('fltST').value.trim().toUpperCase();
-  const fFrom = document.getElementById('fltFrom').value;
-  const fTo   = document.getElementById('fltTo').value;
+  const fST      = document.getElementById('fltST').value.trim().toUpperCase();
+  const fFrom    = document.getElementById('fltFrom').value;
+  const fTo      = document.getElementById('fltTo').value;
+  const fExport  = document.getElementById('fltExport') ? document.getElementById('fltExport').value : 'all';
+
+  const exportedIds = getExportedIds();
 
   filteredDecls = declarations.filter(d => {
     if (fST && !String(d.sieuthiCode).toUpperCase().includes(fST) && !String(d.sieuthiName).toUpperCase().includes(fST)) return false;
     if (fFrom && d.ngay < fFrom) return false;
     if (fTo   && d.ngay > fTo)   return false;
+    if (fExport === 'new'      && exportedIds.has(d.id))  return false;
+    if (fExport === 'exported' && !exportedIds.has(d.id)) return false;
     return true;
   });
+
+  // Cập nhật badge đếm chưa xuất
+  const allNewCount = declarations.filter(d => !exportedIds.has(d.id)).length;
+  const badge = document.getElementById('newRecordsBadge');
+  if (badge) {
+    if (allNewCount > 0) {
+      badge.textContent = `🆕 ${allNewCount} chưa xuất`;
+      badge.style.display = '';
+    } else {
+      badge.style.display = 'none';
+    }
+  }
 
   document.getElementById('recordCount').textContent = `Tổng: ${filteredDecls.length} bản ghi`;
   renderTable();
@@ -389,8 +407,10 @@ function applyFilter() {
 
 function renderTable() {
   const tbody = document.getElementById('tableBody');
+  const exportedIds = getExportedIds();
+
   if (!filteredDecls.length) {
-    tbody.innerHTML = `<tr><td colspan="10">
+    tbody.innerHTML = `<tr><td colspan="11">
       <div class="empty-state"><div class="icon">📋</div><p>Không có dữ liệu phù hợp</p></div>
     </td></tr>`;
     return;
@@ -400,9 +420,13 @@ function renderTable() {
     const checked = selectedIds.has(d.id) ? 'checked' : '';
     const spStr = (d.sanphamList || []).map(x => `${x.code}`).join('; ');
     const nvStr = (d.nhanvienList || []).map(x => `${x.code}`).join('; ');
-
     const spFull = (d.sanphamList || []).map(x => `${x.code} - ${x.name}`).join('\n');
     const nvFull = (d.nhanvienList || []).map(x => `${x.code} - ${x.name}`).join('\n');
+
+    const exported = exportedIds.has(d.id);
+    const exportBadge = exported
+      ? `<span style="display:inline-flex;align-items:center;padding:2px 8px;border-radius:20px;font-size:10px;font-weight:700;background:#e8f5e9;color:#1a7a3c;border:1px solid #c8e6c9;white-space:nowrap;">✅ Đã xuất</span>`
+      : `<span style="display:inline-flex;align-items:center;padding:2px 8px;border-radius:20px;font-size:10px;font-weight:700;background:#fff3e0;color:#e65100;border:1px solid #ffe0b2;white-space:nowrap;">🆕 Mới</span>`;
 
     let actions = `<button class="btn btn-sm btn-gray" onclick="openDetail('${d.id}')">👁 Xem</button> `;
     if (currentUser.role === 'qltp' && String(d.authorCode) === String(currentUser.code)) {
@@ -424,6 +448,7 @@ function renderTable() {
       <td style="font-size:11px;max-width:180px;" title="${spFull}">${spStr || '--'}</td>
       <td style="font-size:11px;max-width:160px;" title="${nvFull}">${nvStr || '--'}</td>
       <td style="font-size:11px;color:var(--gray-600);">${fDate(d.createdAt)}</td>
+      <td>${exportBadge}</td>
       <td style="white-space:nowrap;">${actions}</td>
     </tr>`;
   }).join('');
@@ -470,20 +495,17 @@ function _msRender(field, q) {
   if (field === 'st' && currentUser.role === 'qltp') {
     items = items.filter(s => String(s.qltpCode) === String(currentUser.code));
   }
-  
+
   if (field === 'nv' && currentUser.role === 'qltp') {
-    // Lấy tất cả mã ST thuộc QLTP này
     const mySTCodes = new Set(
       masterData.sieuthi
         .filter(s => String(s.qltpCode) === String(currentUser.code))
         .map(s => s.code)
     );
-    // Hiển thị NV của toàn bộ ST trong phạm vi QLTP, không bị giới hạn bởi ST đang khai báo
     items = items.filter(n => !n.sieuthiCode || mySTCodes.has(n.sieuthiCode));
   }
 
   const upper = q.trim().toUpperCase();
-  // ── FIX: Tìm kiếm theo cả mã lẫn tên ──
   const filtered = upper
     ? items.filter(x =>
         String(x.code).toUpperCase().includes(upper) ||
@@ -610,8 +632,6 @@ function openEdit(id) {
   document.getElementById('inpSP').value    = '';
   document.getElementById('inpNV').value    = '';
   document.getElementById('inpNgay').value  = d.ngay;
-  
-  // Do sử dụng thẻ select tĩnh, gán đúng value để UI update
   document.getElementById('inpTuGio').value = d.tuGio  || '';
   document.getElementById('inpDenGio').value= d.denGio || '';
 
@@ -627,17 +647,15 @@ async function submitCreate() {
   if (!selST)            return toast('error', 'Chọn Siêu Thị!');
   if (!selSP.length)     return toast('error', 'Chọn ít nhất 1 Sản Phẩm!');
   if (!selNV.length)     return toast('error', 'Chọn ít nhất 1 Nhân Viên!');
-  
+
   const ngay  = document.getElementById('inpNgay').value;
   const tuGio = document.getElementById('inpTuGio').value;
   const denGio= document.getElementById('inpDenGio').value;
 
   if (!ngay) return toast('error', 'Chọn Ngày!');
   if (!tuGio || !denGio) return toast('error', 'Nhập đủ Từ giờ và Đến giờ!');
-
   if (tuGio >= denGio) return toast('error', 'Từ giờ phải nhỏ hơn Đến giờ!');
 
-  // Thêm ràng buộc tối đa 3 tiếng (180 phút)
   const [tuH, tuM] = tuGio.split(':').map(Number);
   const [denH, denM] = denGio.split(':').map(Number);
   if ((denH * 60 + denM) - (tuH * 60 + tuM) > 180) {
@@ -747,6 +765,12 @@ function openDetail(id) {
   const nvHtml = (d.nhanvienList || []).map(x =>
     `<span class="tag" style="margin:2px;background:var(--blue-light);color:var(--blue);">${x.code} - ${x.name}</span>`).join('');
 
+  const exportedIds = getExportedIds();
+  const exported = exportedIds.has(d.id);
+  const exportStatusHtml = exported
+    ? `<div class="detail-item"><label>Trạng Thái Export</label><div class="val" style="color:var(--green);">✅ Đã xuất Excel</div></div>`
+    : `<div class="detail-item"><label>Trạng Thái Export</label><div class="val" style="color:var(--orange);">🆕 Chưa xuất</div></div>`;
+
   document.getElementById('detailBody').innerHTML = `
     <div class="detail-grid" style="margin-bottom:16px;">
       <div class="detail-item"><label>Mã Khai Báo</label><div class="val">${d.id}</div></div>
@@ -755,6 +779,7 @@ function openDetail(id) {
       <div class="detail-item"><label>Siêu Thị</label><div class="val">${d.sieuthiCode} - ${d.sieuthiName}</div></div>
       <div class="detail-item"><label>Ngày BK</label><div class="val" style="color:var(--blue);font-size:15px;">${fDate(d.ngay)}</div></div>
       <div class="detail-item"><label>Giờ BK</label><div class="val">${fTime(d.tuGio)} → ${fTime(d.denGio)}</div></div>
+      ${exportStatusHtml}
     </div>
     <div style="margin-bottom:14px;">
       <div class="detail-item"><label>Sản Phẩm</label></div>
@@ -832,14 +857,22 @@ async function clearHistory() {
 }
 
 // ============================================================
-// 13. EXPORT EXCEL
+// 13. EXPORT EXCEL (có tracking đã/chưa xuất)
 // ============================================================
 
-function exportExcel() {
-  if (!filteredDecls.length) return toast('warning', 'Không có dữ liệu để export!');
+function exportExcel(onlyNew = false) {
+  const exportedIds = getExportedIds();
+
+  let toExport = filteredDecls;
+  if (onlyNew) {
+    toExport = filteredDecls.filter(d => !exportedIds.has(d.id));
+    if (!toExport.length) return toast('warning', '✅ Không có bản ghi mới nào chưa xuất!');
+  } else {
+    if (!filteredDecls.length) return toast('warning', 'Không có dữ liệu để export!');
+  }
 
   const header = ['Mã Khai Báo','QLTP Mã','QLTP Tên','Mã ST','Tên ST','Ngày','Từ Giờ','Đến Giờ','Mã SP','Tên SP','Mã NV','Tên NV','Ngày Tạo'];
-  const rows = filteredDecls.map(d => [
+  const rows = toExport.map(d => [
     d.id,
     d.authorCode, d.authorName,
     d.sieuthiCode, d.sieuthiName,
@@ -855,9 +888,21 @@ function exportExcel() {
   const ws = XLSX.utils.aoa_to_sheet([header, ...rows]);
   const wb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, ws, 'KhaiBao');
-  XLSX.writeFile(wb, `BietKich_${new Date().toISOString().split('T')[0]}.xlsx`);
-  toast('success', `✅ Đã export ${rows.length} dòng`);
-  logActivity('EXPORT', null, `${rows.length} dòng`);
+  const suffix = onlyNew ? '_ChuaXuat' : '';
+  XLSX.writeFile(wb, `BietKich${suffix}_${new Date().toISOString().split('T')[0]}.xlsx`);
+
+  // Đánh dấu đã export vào localStorage
+  markAsExported(toExport.map(d => d.id));
+
+  // Cập nhật badge + bảng
+  applyFilter();
+
+  toast('success', `✅ Đã export ${rows.length} dòng${onlyNew ? ' (chỉ mới)' : ''}`);
+  logActivity('EXPORT', null, `${rows.length} dòng${onlyNew ? ' — chỉ chưa xuất' : ''}`);
+}
+
+function exportNewOnly() {
+  exportExcel(true);
 }
 
 function downloadTemplate() {
@@ -977,7 +1022,6 @@ function parseImport(rawRows) {
     } else if (tuGio >= denGio && tuGio !== '24:00') {
       errs.push('Từ giờ ≥ Đến giờ');
     } else {
-      // Thêm ràng buộc tối đa 3 tiếng khi import file
       const [tH, tM] = tuGio.split(':').map(Number);
       const [dH, dM] = denGio.split(':').map(Number);
       if ((dH * 60 + dM) - (tH * 60 + tM) > 180) {
@@ -1180,7 +1224,7 @@ function importMaster(type, input) {
     try {
       const wb   = XLSX.read(new Uint8Array(e.target.result), { type: 'array' });
       const rows = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], { header: 1, defval: '' });
-      if (type === 'phanbo')    parseMasterPhanBo(rows);
+      if (type === 'phanbo')       parseMasterPhanBo(rows);
       else if (type === 'fmcg')    parseMasterSP(rows, 'fmcg');
       else if (type === 'fresh')   parseMasterSP(rows, 'fresh');
       else if (type === 'nhanvien')parseMasterNV(rows);
