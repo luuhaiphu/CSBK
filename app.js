@@ -342,6 +342,8 @@ function setupUI() {
   document.getElementById('adminActionsWrap').style.display = isAdmin ? '' : 'none';
   document.getElementById('btnCreate').style.display  = (isQL || isAdmin) ? '' : 'none';
   document.getElementById('btnImport').style.display  = (isQL || isAdmin) ? '' : 'none';
+  document.getElementById('btnExportNew').style.display    = isAdmin ? '' : 'none';
+  document.getElementById('newRecordsBadge').style.display = isAdmin ? '' : 'none';
 
   document.getElementById('fltFrom').value = '';
   document.getElementById('fltTo').value   = '';
