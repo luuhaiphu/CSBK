@@ -626,7 +626,7 @@ tbody td:first-child { text-align: center; }
       <!-- Export Excel thường -->
       <button class="btn btn-green btn-sm" onclick="exportExcel()">📥 Export Excel</button>
       <!-- ── MỚI: Nút export chỉ bản chưa xuất ── -->
-      <button class="btn btn-sm" style="background:var(--orange);color:#fff;" onclick="exportNewOnly()" title="Chỉ export những bản ghi chưa từng xuất">🆕 Export Mới</button>
+      <button id="btnExportNew" class="btn btn-sm" style="background:var(--orange);color:#fff;" onclick="exportNewOnly()" title="Chỉ export những bản ghi chưa từng xuất">🆕 Export Mới</button>
       <!-- ── MỚI: Badge đếm số chưa xuất ── -->
       <span id="newRecordsBadge" style="display:none;"></span>
 
